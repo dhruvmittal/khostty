@@ -25,6 +25,7 @@ public:
     TerminalSurface* addColumn();
     TerminalSurface* splitCurrentVertical();
     void closeActiveSurface();
+    void closeSurface(TerminalSurface* surface);
 
     void focusLeftColumn();
     void focusRightColumn();

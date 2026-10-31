@@ -298,7 +298,7 @@ void MainWindow::closeTab(int index) {
     m_stack->removeWidget(page);
     m_tabBar->removeTab(index);
     updateTabBarVisibility();
-    delete page;
+    page->deleteLater();
 
     if (m_tabBar->count() == 0) {
         close();

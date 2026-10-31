@@ -43,7 +43,6 @@ TerminalPane::TerminalPane(TerminalSurface* surface, QWidget* parent)
     m_splitRightBtn->setAutoRaise(true);
     m_splitRightBtn->setFixedSize(20, 20);
     m_splitRightBtn->setIconSize(QSize(14, 14));
-    connect(m_splitRightBtn, &QToolButton::triggered, this, &TerminalPane::splitRightRequested);
     connect(m_splitRightBtn, &QToolButton::clicked, this, &TerminalPane::splitRightRequested);
 
     m_splitDownBtn = new QToolButton(m_header);
@@ -52,7 +51,6 @@ TerminalPane::TerminalPane(TerminalSurface* surface, QWidget* parent)
     m_splitDownBtn->setAutoRaise(true);
     m_splitDownBtn->setFixedSize(20, 20);
     m_splitDownBtn->setIconSize(QSize(14, 14));
-    connect(m_splitDownBtn, &QToolButton::triggered, this, &TerminalPane::splitDownRequested);
     connect(m_splitDownBtn, &QToolButton::clicked, this, &TerminalPane::splitDownRequested);
 
     m_closeBtn = new QToolButton(m_header);
@@ -61,7 +59,6 @@ TerminalPane::TerminalPane(TerminalSurface* surface, QWidget* parent)
     m_closeBtn->setAutoRaise(true);
     m_closeBtn->setFixedSize(20, 20);
     m_closeBtn->setIconSize(QSize(14, 14));
-    connect(m_closeBtn, &QToolButton::triggered, this, &TerminalPane::closeRequested);
     connect(m_closeBtn, &QToolButton::clicked, this, &TerminalPane::closeRequested);
 
     headerLayout->addWidget(m_dotIndicator);

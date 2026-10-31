@@ -6,6 +6,7 @@
 #include <QScrollBar>
 #include <QWheelEvent>
 #include <QResizeEvent>
+#include <QTimer>
 #include <algorithm>
 
 WorklaneView::WorklaneView(QWidget* parent)
@@ -135,32 +136,7 @@ void WorklaneView::setupSurface(TerminalSurface* surface) {
     });
 
     connect(surface, &TerminalSurface::closeRequested, this, [this, surface]() {
-        TerminalPane* pane = findPaneForSurface(surface);
-        KhosttySplitter* colSplitter = findSplitterForSurface(surface);
-        if (colSplitter && pane) {
-            delete pane;
-            if (colSplitter->count() == 0) {
-                m_columns.removeAll(colSplitter);
-                delete colSplitter;
-                rebuildCanvasLayout();
-            } else {
-                updateCanvasLayout();
-            }
-        }
-
-        if (m_columns.isEmpty()) {
-            m_activeSurface = nullptr;
-            emit empty();
-        } else {
-            // Focus first available surface in last column
-            KhosttySplitter* lastSplitter = m_columns.last();
-            if (lastSplitter->count() > 0) {
-                auto* nextPane = qobject_cast<TerminalPane*>(lastSplitter->widget(0));
-                if (nextPane && nextPane->surface()) {
-                    setActiveSurface(nextPane->surface());
-                }
-            }
-        }
+        closeSurface(surface);
     });
 
     connect(surface, &TerminalSurface::newSplitRequested, this, [this](ghostty_action_split_direction_e dir) {
@@ -201,7 +177,7 @@ void WorklaneView::setupPane(TerminalPane* pane) {
     });
     connect(pane, &TerminalPane::closeRequested, this, [this, pane]() {
         if (pane->surface()) {
-            pane->surface()->handleProcessExited(true);
+            closeSurface(pane->surface());
         }
     });
 }
@@ -283,9 +259,69 @@ TerminalSurface* WorklaneView::splitCurrentVertical() {
 
 void WorklaneView::closeActiveSurface() {
     if (m_activeSurface) {
-        TerminalPane* pane = findPaneForSurface(m_activeSurface);
-        if (pane) {
-            pane->closeRequested();
+        closeSurface(m_activeSurface);
+    }
+}
+
+void WorklaneView::closeSurface(TerminalSurface* surface) {
+    if (!surface) return;
+
+    TerminalPane* pane = findPaneForSurface(surface);
+    KhosttySplitter* colSplitter = findSplitterForSurface(surface);
+    if (!pane || !colSplitter) return;
+
+    bool wasActive = (m_activeSurface == surface);
+    if (wasActive) {
+        m_activeSurface = nullptr;
+    }
+
+    // Safely remove pane from splitter before scheduling deletion
+    pane->hide();
+    pane->setParent(nullptr);
+    pane->deleteLater();
+
+    if (colSplitter->count() == 0) {
+        m_columns.removeAll(colSplitter);
+        colSplitter->hide();
+        colSplitter->setParent(nullptr);
+        colSplitter->deleteLater();
+        rebuildCanvasLayout();
+    } else {
+        int count = colSplitter->count();
+        if (count > 0) {
+            int totalH = colSplitter->height();
+            int part = std::max(1, totalH / count);
+            QList<int> sizes;
+            for (int i = 0; i < count; ++i) sizes << part;
+            colSplitter->setSizes(sizes);
+        }
+        updateCanvasLayout();
+    }
+
+    if (m_columns.isEmpty()) {
+        m_activeSurface = nullptr;
+        QTimer::singleShot(0, this, [this]() {
+            emit empty();
+        });
+    } else if (wasActive) {
+        // Pick next surface to focus
+        TerminalSurface* nextSurface = nullptr;
+        for (auto* col : m_columns) {
+            for (int i = 0; i < col->count(); ++i) {
+                if (auto* p = qobject_cast<TerminalPane*>(col->widget(i))) {
+                    if (p->surface()) {
+                        nextSurface = p->surface();
+                        break;
+                    }
+                }
+            }
+            if (nextSurface) break;
+        }
+
+        if (nextSurface) {
+            setActiveSurface(nextSurface);
+            nextSurface->setFocus();
+            ensureSurfaceVisible(nextSurface);
         }
     }
 }
