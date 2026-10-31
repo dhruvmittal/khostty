@@ -445,6 +445,15 @@ void TerminalSurface::mouseMoveEvent(QMouseEvent* event) {
 
 void TerminalSurface::wheelEvent(QWheelEvent* event) {
     if (!m_surface) return;
+
+    // Route horizontal gestures or Shift/Alt + Wheel to parent WorklaneView for column scrolling
+    if ((event->modifiers() & (Qt::ShiftModifier | Qt::AltModifier)) ||
+        (std::abs(event->angleDelta().x()) > std::abs(event->angleDelta().y()) && event->angleDelta().x() != 0) ||
+        (!event->pixelDelta().isNull() && std::abs(event->pixelDelta().x()) > std::abs(event->pixelDelta().y()) && event->pixelDelta().x() != 0)) {
+        event->ignore();
+        return;
+    }
+
     ghostty_surface_mouse_scroll(
         m_surface,
         event->angleDelta().x(),
@@ -489,6 +498,7 @@ bool TerminalSurface::handleAction(const ghostty_action_s& action) {
         case GHOSTTY_ACTION_SET_TITLE:
             if (action.action.set_title.title) {
                 QString title = QString::fromUtf8(action.action.set_title.title);
+                m_title = title;
                 emit titleChanged(title);
             }
             return true;

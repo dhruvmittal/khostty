@@ -16,6 +16,7 @@ public:
     ~TerminalSurface() override;
 
     ghostty_surface_t surface() const { return m_surface; }
+    QString title() const { return m_title; }
 
     bool handleAction(const ghostty_action_s& action);
     void handleProcessExited(bool exited);
@@ -70,4 +71,5 @@ private:
     // DMA-BUF EGL state
     void* m_eglDisplay = nullptr;
     bool m_supportsDmaBuf = true;
+    QString m_title;
 };

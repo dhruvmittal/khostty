@@ -7,6 +7,7 @@
 #include <QList>
 
 class TerminalSurface;
+class TerminalPane;
 
 class WorklaneView : public QScrollArea {
     Q_OBJECT
@@ -37,11 +38,14 @@ signals:
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
+    void wheelEvent(QWheelEvent* event) override;
 
 private:
     void setupSurface(TerminalSurface* surface);
+    void setupPane(TerminalPane* pane);
     void setActiveSurface(TerminalSurface* surface);
     void ensureSurfaceVisible(TerminalSurface* surface);
+    TerminalPane* findPaneForSurface(TerminalSurface* surface) const;
     QSplitter* findSplitterForSurface(TerminalSurface* surface) const;
 
     QWidget* m_container = nullptr;
