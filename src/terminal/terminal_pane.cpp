@@ -13,6 +13,7 @@ TerminalPane::TerminalPane(TerminalSurface* surface, QWidget* parent)
 {
     setFrameShape(QFrame::NoFrame);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    setMinimumSize(200, 80);
 
     auto* rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(0, 0, 0, 0);

@@ -64,6 +64,8 @@ add_executable(khostty
     src/core/ghostty_core.cpp
     src/terminal/terminal_surface.cpp
     src/terminal/terminal_pane.cpp
+    src/terminal/khostty_splitter.cpp
+    src/terminal/worklane_separator.cpp
     src/terminal/worklane_view.cpp
     src/window/main_window.cpp
     resources/resources.qrc

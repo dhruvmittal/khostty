@@ -3,8 +3,9 @@
 #include <QWidget>
 #include <QScrollArea>
 #include <QHBoxLayout>
-#include <QSplitter>
 #include <QList>
+#include "terminal/khostty_splitter.h"
+#include "terminal/worklane_separator.h"
 
 class TerminalSurface;
 class TerminalPane;
@@ -19,6 +20,7 @@ public:
     TerminalSurface* activeSurface() const;
     int columnCount() const;
     QString activeTitle() const { return m_activeTitle; }
+    bool hasAnySplit() const;
 
     TerminalSurface* addColumn();
     TerminalSurface* splitCurrentVertical();
@@ -31,6 +33,9 @@ public:
     void equalizeSplits();
     void toggleSplitZoom();
 
+    void rebuildCanvasLayout();
+    void updateCanvasLayout();
+
 signals:
     void activeSurfaceChanged(TerminalSurface* surface);
     void titleChanged(const QString& title);
@@ -39,6 +44,7 @@ signals:
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
 
 private:
     void setupSurface(TerminalSurface* surface);
@@ -46,11 +52,12 @@ private:
     void setActiveSurface(TerminalSurface* surface);
     void ensureSurfaceVisible(TerminalSurface* surface);
     TerminalPane* findPaneForSurface(TerminalSurface* surface) const;
-    QSplitter* findSplitterForSurface(TerminalSurface* surface) const;
+    KhosttySplitter* findSplitterForSurface(TerminalSurface* surface) const;
 
-    QWidget* m_container = nullptr;
-    QHBoxLayout* m_columnsLayout = nullptr;
-    QList<QSplitter*> m_columns;
+    QWidget* m_canvas = nullptr;
+    QHBoxLayout* m_canvasLayout = nullptr;
+    QList<KhosttySplitter*> m_columns;
+    QList<WorklaneSeparator*> m_separators;
     TerminalSurface* m_activeSurface = nullptr;
     QString m_activeTitle;
     bool m_isZoomed = false;

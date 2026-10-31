@@ -1,26 +1,27 @@
 #include "terminal/worklane_view.h"
 #include "terminal/terminal_surface.h"
 #include "terminal/terminal_pane.h"
+#include "core/ghostty_core.h"
 
 #include <QScrollBar>
-#include <QFocusEvent>
 #include <QWheelEvent>
-#include <QDebug>
+#include <QResizeEvent>
+#include <algorithm>
 
 WorklaneView::WorklaneView(QWidget* parent)
     : QScrollArea(parent)
 {
-    setWidgetResizable(true);
-    setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    setWidgetResizable(false);
+    setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     setFrameShape(QFrame::NoFrame);
 
-    m_container = new QWidget(this);
-    m_columnsLayout = new QHBoxLayout(m_container);
-    m_columnsLayout->setContentsMargins(4, 4, 4, 4);
-    m_columnsLayout->setSpacing(6);
+    m_canvas = new QWidget(viewport());
+    m_canvasLayout = new QHBoxLayout(m_canvas);
+    m_canvasLayout->setContentsMargins(0, 0, 0, 0);
+    m_canvasLayout->setSpacing(0);
 
-    setWidget(m_container);
+    setWidget(m_canvas);
 
     // Initial column
     addColumn();
@@ -36,8 +37,94 @@ int WorklaneView::columnCount() const {
     return m_columns.size();
 }
 
+bool WorklaneView::hasAnySplit() const {
+    if (m_columns.size() > 1) return true;
+    if (m_columns.size() == 1 && m_columns[0]->count() > 1) return true;
+    return false;
+}
+
+void WorklaneView::rebuildCanvasLayout() {
+    for (auto* sep : m_separators) {
+        delete sep;
+    }
+    m_separators.clear();
+
+    QLayoutItem* item;
+    while ((item = m_canvasLayout->takeAt(0)) != nullptr) {
+        delete item;
+    }
+
+    if (m_columns.isEmpty()) {
+        updateCanvasLayout();
+        return;
+    }
+
+    int viewportW = viewport()->width();
+    bool splitPresent = hasAnySplit();
+    int maxAllowed = splitPresent ? std::max(280, static_cast<int>(viewportW * 0.90)) : viewportW;
+
+    if (m_columns.size() == 1) {
+        auto* col = m_columns[0];
+        if (splitPresent) {
+            if (col->width() > maxAllowed) {
+                col->setFixedWidth(maxAllowed);
+            }
+            m_canvasLayout->addWidget(col);
+
+            auto* sep = new WorklaneSeparator(col, this, m_canvas);
+            m_separators.append(sep);
+            m_canvasLayout->addWidget(sep);
+        } else {
+            col->setFixedWidth(std::max(viewportW, 400));
+            m_canvasLayout->addWidget(col);
+        }
+    } else {
+        for (int i = 0; i < m_columns.size(); ++i) {
+            auto* col = m_columns[i];
+            if (col->width() > maxAllowed) {
+                col->setFixedWidth(maxAllowed);
+            }
+            m_canvasLayout->addWidget(col);
+
+            auto* sep = new WorklaneSeparator(col, this, m_canvas);
+            m_separators.append(sep);
+            m_canvasLayout->addWidget(sep);
+        }
+    }
+
+    updateCanvasLayout();
+}
+
+void WorklaneView::updateCanvasLayout() {
+    int viewportW = viewport()->width();
+    int viewportH = viewport()->height();
+
+    int totalW = 0;
+    bool splitPresent = hasAnySplit();
+    int maxAllowed = splitPresent ? std::max(280, static_cast<int>(viewportW * 0.90)) : viewportW;
+
+    for (auto* col : m_columns) {
+        if (splitPresent && col->width() > maxAllowed) {
+            col->setFixedWidth(maxAllowed);
+        }
+        col->setFixedHeight(viewportH);
+        totalW += col->width();
+    }
+    for (auto* sep : m_separators) {
+        sep->setFixedHeight(viewportH);
+        totalW += sep->width();
+    }
+
+    int finalW = std::max(totalW, viewportW);
+    m_canvas->setFixedSize(finalW, viewportH);
+}
+
+void WorklaneView::resizeEvent(QResizeEvent* event) {
+    QScrollArea::resizeEvent(event);
+    updateCanvasLayout();
+}
+
 void WorklaneView::setupSurface(TerminalSurface* surface) {
-    if (!surface) return;
     surface->installEventFilter(this);
 
     connect(surface, &TerminalSurface::titleChanged, this, [this, surface](const QString& title) {
@@ -49,13 +136,15 @@ void WorklaneView::setupSurface(TerminalSurface* surface) {
 
     connect(surface, &TerminalSurface::closeRequested, this, [this, surface]() {
         TerminalPane* pane = findPaneForSurface(surface);
-        QSplitter* splitter = findSplitterForSurface(surface);
-        if (splitter && pane) {
+        KhosttySplitter* colSplitter = findSplitterForSurface(surface);
+        if (colSplitter && pane) {
             delete pane;
-            if (splitter->count() == 0) {
-                m_columns.removeAll(splitter);
-                m_columnsLayout->removeWidget(splitter);
-                delete splitter;
+            if (colSplitter->count() == 0) {
+                m_columns.removeAll(colSplitter);
+                delete colSplitter;
+                rebuildCanvasLayout();
+            } else {
+                updateCanvasLayout();
             }
         }
 
@@ -64,7 +153,7 @@ void WorklaneView::setupSurface(TerminalSurface* surface) {
             emit empty();
         } else {
             // Focus first available surface in last column
-            QSplitter* lastSplitter = m_columns.last();
+            KhosttySplitter* lastSplitter = m_columns.last();
             if (lastSplitter->count() > 0) {
                 auto* nextPane = qobject_cast<TerminalPane*>(lastSplitter->widget(0));
                 if (nextPane && nextPane->surface()) {
@@ -118,21 +207,32 @@ void WorklaneView::setupPane(TerminalPane* pane) {
 }
 
 TerminalSurface* WorklaneView::addColumn() {
-    auto* splitter = new QSplitter(Qt::Vertical, m_container);
-    splitter->setChildrenCollapsible(false);
-    splitter->setMinimumWidth(400);
+    int viewportW = viewport()->width();
+    int viewportH = viewport()->height();
 
-    auto* surface = new TerminalSurface(splitter);
+    auto* colSplitter = new KhosttySplitter(Qt::Vertical, m_canvas);
+    colSplitter->setMinimumHeight(std::max(100, viewportH));
+
+    auto* surface = new TerminalSurface(colSplitter);
     setupSurface(surface);
 
-    auto* pane = new TerminalPane(surface, splitter);
+    auto* pane = new TerminalPane(surface, colSplitter);
     setupPane(pane);
-    splitter->addWidget(pane);
+    colSplitter->addWidget(pane);
 
-    m_columns.append(splitter);
-    m_columnsLayout->addWidget(splitter);
+    if (m_columns.isEmpty()) {
+        colSplitter->setFixedWidth(std::max(400, viewportW));
+    } else {
+        int maxAllowed = std::max(280, static_cast<int>(viewportW * 0.90));
+        int colW = std::clamp(static_cast<int>(viewportW * 0.50), 350, maxAllowed);
+        colSplitter->setFixedWidth(colW);
+    }
+
+    m_columns.append(colSplitter);
+    rebuildCanvasLayout();
 
     setActiveSurface(surface);
+    ensureSurfaceVisible(surface);
     return surface;
 }
 
@@ -141,7 +241,7 @@ TerminalSurface* WorklaneView::splitCurrentVertical() {
         return addColumn();
     }
 
-    QSplitter* splitter = findSplitterForSurface(m_activeSurface);
+    KhosttySplitter* splitter = findSplitterForSurface(m_activeSurface);
     if (!splitter) {
         return addColumn();
     }
@@ -160,41 +260,63 @@ TerminalSurface* WorklaneView::splitCurrentVertical() {
         splitter->addWidget(pane);
     }
 
+    // Equalize vertical splits within this column
+    int count = splitter->count();
+    if (count > 1) {
+        int totalHeight = splitter->height();
+        int part = std::max(1, totalHeight / count);
+        QList<int> sizes;
+        for (int i = 0; i < count; ++i) sizes << part;
+        splitter->setSizes(sizes);
+    }
+
+    if (m_columns.size() == 1) {
+        rebuildCanvasLayout();
+    } else {
+        updateCanvasLayout();
+    }
+
     setActiveSurface(surface);
+    ensureSurfaceVisible(surface);
     return surface;
 }
 
 void WorklaneView::closeActiveSurface() {
     if (m_activeSurface) {
-        m_activeSurface->handleProcessExited(true);
+        TerminalPane* pane = findPaneForSurface(m_activeSurface);
+        if (pane) {
+            pane->closeRequested();
+        }
     }
 }
 
 void WorklaneView::focusLeftColumn() {
-    if (!m_activeSurface || m_columns.size() <= 1) return;
-    QSplitter* currentSplitter = findSplitterForSurface(m_activeSurface);
-    int idx = m_columns.indexOf(currentSplitter);
+    if (m_columns.size() <= 1 || !m_activeSurface) return;
+    KhosttySplitter* current = findSplitterForSurface(m_activeSurface);
+    int idx = m_columns.indexOf(current);
     if (idx > 0) {
-        QSplitter* targetSplitter = m_columns[idx - 1];
-        if (targetSplitter->count() > 0) {
-            auto* targetPane = qobject_cast<TerminalPane*>(targetSplitter->widget(0));
-            if (targetPane && targetPane->surface()) {
-                setActiveSurface(targetPane->surface());
+        KhosttySplitter* prev = m_columns[idx - 1];
+        if (prev->count() > 0) {
+            auto* p = qobject_cast<TerminalPane*>(prev->widget(0));
+            if (p && p->surface()) {
+                p->surface()->setFocus();
+                ensureSurfaceVisible(p->surface());
             }
         }
     }
 }
 
 void WorklaneView::focusRightColumn() {
-    if (!m_activeSurface || m_columns.size() <= 1) return;
-    QSplitter* currentSplitter = findSplitterForSurface(m_activeSurface);
-    int idx = m_columns.indexOf(currentSplitter);
+    if (m_columns.size() <= 1 || !m_activeSurface) return;
+    KhosttySplitter* current = findSplitterForSurface(m_activeSurface);
+    int idx = m_columns.indexOf(current);
     if (idx >= 0 && idx < m_columns.size() - 1) {
-        QSplitter* targetSplitter = m_columns[idx + 1];
-        if (targetSplitter->count() > 0) {
-            auto* targetPane = qobject_cast<TerminalPane*>(targetSplitter->widget(0));
-            if (targetPane && targetPane->surface()) {
-                setActiveSurface(targetPane->surface());
+        KhosttySplitter* next = m_columns[idx + 1];
+        if (next->count() > 0) {
+            auto* p = qobject_cast<TerminalPane*>(next->widget(0));
+            if (p && p->surface()) {
+                p->surface()->setFocus();
+                ensureSurfaceVisible(p->surface());
             }
         }
     }
@@ -202,39 +324,36 @@ void WorklaneView::focusRightColumn() {
 
 void WorklaneView::focusUpSplit() {
     if (!m_activeSurface) return;
-    QSplitter* splitter = findSplitterForSurface(m_activeSurface);
+    KhosttySplitter* splitter = findSplitterForSurface(m_activeSurface);
+    if (!splitter || splitter->count() <= 1) return;
     TerminalPane* currentPane = findPaneForSurface(m_activeSurface);
-    if (!splitter || !currentPane) return;
     int idx = splitter->indexOf(currentPane);
     if (idx > 0) {
-        auto* targetPane = qobject_cast<TerminalPane*>(splitter->widget(idx - 1));
-        if (targetPane && targetPane->surface()) {
-            setActiveSurface(targetPane->surface());
+        auto* p = qobject_cast<TerminalPane*>(splitter->widget(idx - 1));
+        if (p && p->surface()) {
+            p->surface()->setFocus();
+            ensureSurfaceVisible(p->surface());
         }
     }
 }
 
 void WorklaneView::focusDownSplit() {
     if (!m_activeSurface) return;
-    QSplitter* splitter = findSplitterForSurface(m_activeSurface);
+    KhosttySplitter* splitter = findSplitterForSurface(m_activeSurface);
+    if (!splitter || splitter->count() <= 1) return;
     TerminalPane* currentPane = findPaneForSurface(m_activeSurface);
-    if (!splitter || !currentPane) return;
     int idx = splitter->indexOf(currentPane);
     if (idx >= 0 && idx < splitter->count() - 1) {
-        auto* targetPane = qobject_cast<TerminalPane*>(splitter->widget(idx + 1));
-        if (targetPane && targetPane->surface()) {
-            setActiveSurface(targetPane->surface());
+        auto* p = qobject_cast<TerminalPane*>(splitter->widget(idx + 1));
+        if (p && p->surface()) {
+            p->surface()->setFocus();
+            ensureSurfaceVisible(p->surface());
         }
     }
 }
 
 void WorklaneView::setActiveSurface(TerminalSurface* surface) {
-    if (m_activeSurface == surface && surface != nullptr) {
-        if (auto* pane = findPaneForSurface(surface)) {
-            pane->setActive(true);
-        }
-        return;
-    }
+    if (m_activeSurface == surface) return;
 
     if (m_activeSurface) {
         if (auto* oldPane = findPaneForSurface(m_activeSurface)) {
@@ -243,19 +362,37 @@ void WorklaneView::setActiveSurface(TerminalSurface* surface) {
     }
 
     m_activeSurface = surface;
+
     if (m_activeSurface) {
         if (auto* newPane = findPaneForSurface(m_activeSurface)) {
             newPane->setActive(true);
         }
-        m_activeSurface->setFocus();
-        ensureSurfaceVisible(m_activeSurface);
+        m_activeTitle = m_activeSurface->title();
         emit activeSurfaceChanged(m_activeSurface);
         emit titleChanged(m_activeTitle);
+        ensureSurfaceVisible(m_activeSurface);
     }
 }
 
 void WorklaneView::equalizeSplits() {
     if (m_columns.isEmpty()) return;
+
+    int viewportW = viewport()->width();
+    bool splitPresent = hasAnySplit();
+    int maxAllowed = splitPresent ? std::max(280, static_cast<int>(viewportW * 0.90)) : viewportW;
+
+    if (m_columns.size() == 1) {
+        m_columns[0]->setFixedWidth(splitPresent ? maxAllowed : viewportW);
+    } else {
+        int count = static_cast<int>(m_columns.size());
+        int available = (viewportW - 8 * count) / count;
+        int equalW = std::min(maxAllowed, std::max(350, available));
+        for (auto* col : m_columns) {
+            col->setFixedWidth(equalW);
+        }
+    }
+
+    // Equalize vertical splits within each column
     for (auto* splitter : m_columns) {
         int count = splitter->count();
         if (count > 0) {
@@ -266,11 +403,13 @@ void WorklaneView::equalizeSplits() {
             splitter->setSizes(sizes);
         }
     }
+
+    updateCanvasLayout();
 }
 
 void WorklaneView::toggleSplitZoom() {
     if (!m_activeSurface) return;
-    QSplitter* splitter = findSplitterForSurface(m_activeSurface);
+    KhosttySplitter* splitter = findSplitterForSurface(m_activeSurface);
     TerminalPane* currentPane = findPaneForSurface(m_activeSurface);
     if (!splitter || !currentPane || splitter->count() <= 1) return;
 
@@ -304,10 +443,10 @@ TerminalPane* WorklaneView::findPaneForSurface(TerminalSurface* surface) const {
     return qobject_cast<TerminalPane*>(surface->parentWidget());
 }
 
-QSplitter* WorklaneView::findSplitterForSurface(TerminalSurface* surface) const {
+KhosttySplitter* WorklaneView::findSplitterForSurface(TerminalSurface* surface) const {
     TerminalPane* pane = findPaneForSurface(surface);
     if (!pane) return nullptr;
-    return qobject_cast<QSplitter*>(pane->parentWidget());
+    return qobject_cast<KhosttySplitter*>(pane->parentWidget());
 }
 
 bool WorklaneView::eventFilter(QObject* watched, QEvent* event) {
@@ -322,19 +461,21 @@ bool WorklaneView::eventFilter(QObject* watched, QEvent* event) {
 
 void WorklaneView::wheelEvent(QWheelEvent* event) {
     int delta = 0;
+    // Fast scroll multiplier: 2.5x base, 5x hyper-scroll if Ctrl is held
+    double multiplier = (event->modifiers() & Qt::ControlModifier) ? 5.0 : 2.5;
+
     if (!event->pixelDelta().isNull() && event->pixelDelta().x() != 0) {
-        delta = event->pixelDelta().x();
+        delta = static_cast<int>(event->pixelDelta().x() * multiplier);
     } else if (event->angleDelta().x() != 0) {
-        delta = event->angleDelta().x();
+        delta = static_cast<int>(event->angleDelta().x() * multiplier);
     } else if (event->angleDelta().y() != 0 && (event->modifiers() & (Qt::ShiftModifier | Qt::AltModifier))) {
-        delta = event->angleDelta().y();
+        delta = static_cast<int>(event->angleDelta().y() * multiplier);
     }
 
     if (delta != 0) {
         horizontalScrollBar()->setValue(horizontalScrollBar()->value() - delta);
         event->accept();
-        return;
+    } else {
+        QScrollArea::wheelEvent(event);
     }
-
-    QScrollArea::wheelEvent(event);
 }
