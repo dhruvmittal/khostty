@@ -45,6 +45,8 @@ bool WorklaneView::hasAnySplit() const {
 }
 
 void WorklaneView::rebuildCanvasLayout() {
+    int savedScroll = horizontalScrollBar()->value();
+
     for (auto* sep : m_separators) {
         delete sep;
     }
@@ -94,6 +96,7 @@ void WorklaneView::rebuildCanvasLayout() {
     }
 
     updateCanvasLayout();
+    horizontalScrollBar()->setValue(savedScroll);
 }
 
 void WorklaneView::updateCanvasLayout() {
@@ -169,11 +172,12 @@ void WorklaneView::setupSurface(TerminalSurface* surface) {
 
 void WorklaneView::setupPane(TerminalPane* pane) {
     if (!pane) return;
-    connect(pane, &TerminalPane::splitRightRequested, this, [this]() {
-        addColumn();
+    connect(pane, &TerminalPane::splitRightRequested, this, [this, pane]() {
+        KhosttySplitter* col = findSplitterForSurface(pane->surface());
+        addColumnAfter(col);
     });
-    connect(pane, &TerminalPane::splitDownRequested, this, [this]() {
-        splitCurrentVertical();
+    connect(pane, &TerminalPane::splitDownRequested, this, [this, pane]() {
+        splitVertical(pane->surface());
     });
     connect(pane, &TerminalPane::closeRequested, this, [this, pane]() {
         if (pane->surface()) {
@@ -183,6 +187,11 @@ void WorklaneView::setupPane(TerminalPane* pane) {
 }
 
 TerminalSurface* WorklaneView::addColumn() {
+    KhosttySplitter* current = findSplitterForSurface(m_activeSurface);
+    return addColumnAfter(current);
+}
+
+TerminalSurface* WorklaneView::addColumnAfter(KhosttySplitter* targetCol) {
     int viewportW = viewport()->width();
     int viewportH = viewport()->height();
 
@@ -198,26 +207,43 @@ TerminalSurface* WorklaneView::addColumn() {
 
     if (m_columns.isEmpty()) {
         colSplitter->setFixedWidth(std::max(400, viewportW));
+        m_columns.append(colSplitter);
     } else {
         int maxAllowed = std::max(280, static_cast<int>(viewportW * 0.90));
         int colW = std::clamp(static_cast<int>(viewportW * 0.50), 350, maxAllowed);
         colSplitter->setFixedWidth(colW);
+
+        int insertIdx = m_columns.size();
+        if (targetCol) {
+            int idx = m_columns.indexOf(targetCol);
+            if (idx != -1) {
+                insertIdx = idx + 1;
+            }
+        }
+        m_columns.insert(insertIdx, colSplitter);
     }
 
-    m_columns.append(colSplitter);
     rebuildCanvasLayout();
 
     setActiveSurface(surface);
+    surface->setFocus();
     ensureSurfaceVisible(surface);
     return surface;
 }
 
 TerminalSurface* WorklaneView::splitCurrentVertical() {
-    if (!m_activeSurface) {
+    return splitVertical(m_activeSurface);
+}
+
+TerminalSurface* WorklaneView::splitVertical(TerminalSurface* target) {
+    if (!target) {
+        target = m_activeSurface;
+    }
+    if (!target) {
         return addColumn();
     }
 
-    KhosttySplitter* splitter = findSplitterForSurface(m_activeSurface);
+    KhosttySplitter* splitter = findSplitterForSurface(target);
     if (!splitter) {
         return addColumn();
     }
@@ -228,7 +254,7 @@ TerminalSurface* WorklaneView::splitCurrentVertical() {
     auto* pane = new TerminalPane(surface, splitter);
     setupPane(pane);
 
-    TerminalPane* currentPane = findPaneForSurface(m_activeSurface);
+    TerminalPane* currentPane = findPaneForSurface(target);
     int idx = currentPane ? splitter->indexOf(currentPane) : -1;
     if (idx != -1) {
         splitter->insertWidget(idx + 1, pane);
@@ -253,6 +279,7 @@ TerminalSurface* WorklaneView::splitCurrentVertical() {
     }
 
     setActiveSurface(surface);
+    surface->setFocus();
     ensureSurfaceVisible(surface);
     return surface;
 }
@@ -270,9 +297,36 @@ void WorklaneView::closeSurface(TerminalSurface* surface) {
     KhosttySplitter* colSplitter = findSplitterForSurface(surface);
     if (!pane || !colSplitter) return;
 
+    int savedScroll = horizontalScrollBar()->value();
     bool wasActive = (m_activeSurface == surface);
     if (wasActive) {
         m_activeSurface = nullptr;
+    }
+
+    // Determine neighbor to focus if wasActive
+    TerminalSurface* nextSurface = nullptr;
+    int colIdx = m_columns.indexOf(colSplitter);
+    int paneIdx = colSplitter->indexOf(pane);
+
+    if (colSplitter->count() > 1) {
+        // Another pane in the same column
+        int nextPaneIdx = (paneIdx + 1 < colSplitter->count()) ? (paneIdx + 1) : (paneIdx - 1);
+        if (nextPaneIdx >= 0 && nextPaneIdx < colSplitter->count()) {
+            if (auto* p = qobject_cast<TerminalPane*>(colSplitter->widget(nextPaneIdx))) {
+                nextSurface = p->surface();
+            }
+        }
+    } else if (m_columns.size() > 1) {
+        // Entire column is closing; pick adjacent column
+        int nextColIdx = (colIdx + 1 < m_columns.size()) ? (colIdx + 1) : (colIdx - 1);
+        if (nextColIdx >= 0 && nextColIdx < m_columns.size()) {
+            KhosttySplitter* nextCol = m_columns[nextColIdx];
+            if (nextCol->count() > 0) {
+                if (auto* p = qobject_cast<TerminalPane*>(nextCol->widget(0))) {
+                    nextSurface = p->surface();
+                }
+            }
+        }
     }
 
     // Safely remove pane from splitter before scheduling deletion
@@ -281,7 +335,7 @@ void WorklaneView::closeSurface(TerminalSurface* surface) {
     pane->deleteLater();
 
     if (colSplitter->count() == 0) {
-        m_columns.removeAll(colSplitter);
+        m_columns.removeOne(colSplitter);
         colSplitter->hide();
         colSplitter->setParent(nullptr);
         colSplitter->deleteLater();
@@ -298,30 +352,23 @@ void WorklaneView::closeSurface(TerminalSurface* surface) {
         updateCanvasLayout();
     }
 
+    // Restore scroll position
+    horizontalScrollBar()->setValue(savedScroll);
+
     if (m_columns.isEmpty()) {
         m_activeSurface = nullptr;
         QTimer::singleShot(0, this, [this]() {
             emit empty();
         });
     } else if (wasActive) {
-        // Pick next surface to focus
-        TerminalSurface* nextSurface = nullptr;
-        for (auto* col : m_columns) {
-            for (int i = 0; i < col->count(); ++i) {
-                if (auto* p = qobject_cast<TerminalPane*>(col->widget(i))) {
-                    if (p->surface()) {
-                        nextSurface = p->surface();
-                        break;
-                    }
-                }
-            }
-            if (nextSurface) break;
-        }
-
         if (nextSurface) {
             setActiveSurface(nextSurface);
             nextSurface->setFocus();
             ensureSurfaceVisible(nextSurface);
+        }
+    } else {
+        if (m_activeSurface) {
+            ensureSurfaceVisible(m_activeSurface);
         }
     }
 }

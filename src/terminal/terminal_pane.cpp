@@ -23,6 +23,7 @@ TerminalPane::TerminalPane(TerminalSurface* surface, QWidget* parent)
     m_header = new QWidget(this);
     m_header->setFixedHeight(26);
     m_header->setCursor(Qt::ArrowCursor);
+    m_header->installEventFilter(this);
 
     auto* headerLayout = new QHBoxLayout(m_header);
     headerLayout->setContentsMargins(8, 2, 6, 2);
@@ -43,6 +44,7 @@ TerminalPane::TerminalPane(TerminalSurface* surface, QWidget* parent)
     m_splitRightBtn->setAutoRaise(true);
     m_splitRightBtn->setFixedSize(20, 20);
     m_splitRightBtn->setIconSize(QSize(14, 14));
+    connect(m_splitRightBtn, &QToolButton::pressed, this, [this]() { if (m_surface) m_surface->setFocus(); });
     connect(m_splitRightBtn, &QToolButton::clicked, this, &TerminalPane::splitRightRequested);
 
     m_splitDownBtn = new QToolButton(m_header);
@@ -51,6 +53,7 @@ TerminalPane::TerminalPane(TerminalSurface* surface, QWidget* parent)
     m_splitDownBtn->setAutoRaise(true);
     m_splitDownBtn->setFixedSize(20, 20);
     m_splitDownBtn->setIconSize(QSize(14, 14));
+    connect(m_splitDownBtn, &QToolButton::pressed, this, [this]() { if (m_surface) m_surface->setFocus(); });
     connect(m_splitDownBtn, &QToolButton::clicked, this, &TerminalPane::splitDownRequested);
 
     m_closeBtn = new QToolButton(m_header);
@@ -59,6 +62,7 @@ TerminalPane::TerminalPane(TerminalSurface* surface, QWidget* parent)
     m_closeBtn->setAutoRaise(true);
     m_closeBtn->setFixedSize(20, 20);
     m_closeBtn->setIconSize(QSize(14, 14));
+    connect(m_closeBtn, &QToolButton::pressed, this, [this]() { if (m_surface) m_surface->setFocus(); });
     connect(m_closeBtn, &QToolButton::clicked, this, &TerminalPane::closeRequested);
 
     headerLayout->addWidget(m_dotIndicator);
@@ -141,6 +145,11 @@ void TerminalPane::mousePressEvent(QMouseEvent* event) {
 }
 
 bool TerminalPane::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == m_header && event->type() == QEvent::MouseButtonPress) {
+        if (m_surface) {
+            m_surface->setFocus();
+        }
+    }
     if (watched == m_surface) {
         if (event->type() == QEvent::FocusIn) {
             setActive(true);

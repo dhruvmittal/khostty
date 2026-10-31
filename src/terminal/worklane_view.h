@@ -23,6 +23,8 @@ public:
     bool hasAnySplit() const;
 
     TerminalSurface* addColumn();
+    TerminalSurface* addColumnAfter(KhosttySplitter* targetCol = nullptr);
+    TerminalSurface* splitVertical(TerminalSurface* target = nullptr);
     TerminalSurface* splitCurrentVertical();
     void closeActiveSurface();
     void closeSurface(TerminalSurface* surface);
