@@ -29,10 +29,16 @@ signals:
     void bell();
     void closeRequested();
     void desktopNotification(const QString& title, const QString& body);
+    void newSplitRequested(ghostty_action_split_direction_e direction);
+    void gotoSplitRequested(ghostty_action_goto_split_e direction);
+    void gotoTabRequested(int tabIndex);
+    void nextTabRequested();
+    void previousTabRequested();
 
 protected:
     void initializeGL() override;
     void resizeGL(int w, int h) override;
+    void resizeEvent(QResizeEvent* event) override;
     void paintGL() override;
 
     void keyPressEvent(QKeyEvent* event) override;

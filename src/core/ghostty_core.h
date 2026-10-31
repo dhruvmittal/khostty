@@ -2,6 +2,8 @@
 
 #include <QObject>
 #include <QHash>
+#include <QTimer>
+#include <atomic>
 #include <ghostty.h>
 #include <khostty_bridge.h>
 
@@ -23,8 +25,12 @@ public:
     void unregisterSurface(ghostty_surface_t surface);
     TerminalSurface* findSurface(ghostty_surface_t surface) const;
 
+public slots:
+    void tick();
+
 signals:
     void newWindowRequested();
+    void newTabRequested();
     void quitRequested();
 
 private:
@@ -58,4 +64,6 @@ private:
     ghostty_config_t m_config = nullptr;
     QHash<ghostty_surface_t, TerminalSurface*> m_surfaces;
     bool m_initialized = false;
+    std::atomic<bool> m_tickPending{false};
+    QTimer m_tickTimer;
 };

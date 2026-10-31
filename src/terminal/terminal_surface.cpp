@@ -59,6 +59,12 @@ TerminalSurface::TerminalSurface(QWidget* parent)
     }
 
     GhosttyCore::instance().registerSurface(m_surface, this);
+
+    double dpr = devicePixelRatioF();
+    uint32_t px_w = static_cast<uint32_t>(std::max(1, width()) * dpr);
+    uint32_t px_h = static_cast<uint32_t>(std::max(1, height()) * dpr);
+    ghostty_surface_set_content_scale(m_surface, dpr, dpr);
+    ghostty_surface_set_size(m_surface, px_w, px_h);
 }
 
 TerminalSurface::~TerminalSurface() {
@@ -131,13 +137,13 @@ void TerminalSurface::setupGLResources() {
     // Quad covering entire normalized device coordinates (-1 to 1)
     // Vertices: pos.x, pos.y, tex.u, tex.v
     static const float vertices[] = {
-        -1.0f,  1.0f, 0.0f, 0.0f,
-        -1.0f, -1.0f, 0.0f, 1.0f,
-         1.0f, -1.0f, 1.0f, 1.0f,
+        -1.0f,  1.0f, 0.0f, 1.0f,
+        -1.0f, -1.0f, 0.0f, 0.0f,
+         1.0f, -1.0f, 1.0f, 0.0f,
 
-        -1.0f,  1.0f, 0.0f, 0.0f,
-         1.0f, -1.0f, 1.0f, 1.0f,
-         1.0f,  1.0f, 1.0f, 0.0f,
+        -1.0f,  1.0f, 0.0f, 1.0f,
+         1.0f, -1.0f, 1.0f, 0.0f,
+         1.0f,  1.0f, 1.0f, 1.0f,
     };
 
     m_vao.create();
@@ -181,8 +187,20 @@ void TerminalSurface::resizeGL(int w, int h) {
     if (!m_surface) return;
 
     double dpr = devicePixelRatioF();
-    uint32_t px_w = static_cast<uint32_t>(w * dpr);
-    uint32_t px_h = static_cast<uint32_t>(h * dpr);
+    uint32_t px_w = static_cast<uint32_t>(std::max(1, w) * dpr);
+    uint32_t px_h = static_cast<uint32_t>(std::max(1, h) * dpr);
+
+    ghostty_surface_set_content_scale(m_surface, dpr, dpr);
+    ghostty_surface_set_size(m_surface, px_w, px_h);
+}
+
+void TerminalSurface::resizeEvent(QResizeEvent* event) {
+    QOpenGLWidget::resizeEvent(event);
+    if (!m_surface) return;
+
+    double dpr = devicePixelRatioF();
+    uint32_t px_w = static_cast<uint32_t>(std::max(1, width()) * dpr);
+    uint32_t px_h = static_cast<uint32_t>(std::max(1, height()) * dpr);
 
     ghostty_surface_set_content_scale(m_surface, dpr, dpr);
     ghostty_surface_set_size(m_surface, px_w, px_h);
@@ -210,10 +228,14 @@ bool TerminalSurface::importDmaBufFrame(const khostty_frame_dmabuf_s& dmabuf) {
     attribs[idx++] = dmabuf.planes.offsets[0];
     attribs[idx++] = EGL_DMA_BUF_PLANE0_PITCH_EXT;
     attribs[idx++] = dmabuf.planes.strides[0];
-    attribs[idx++] = EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT;
-    attribs[idx++] = static_cast<EGLint>(dmabuf.modifier & 0xFFFFFFFF);
-    attribs[idx++] = EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT;
-    attribs[idx++] = static_cast<EGLint>((dmabuf.modifier >> 32) & 0xFFFFFFFF);
+
+    // Only set modifier if not DRM_FORMAT_MOD_INVALID (0x00ffffffffffffffULL)
+    if (dmabuf.modifier != 0x00ffffffffffffffULL) {
+        attribs[idx++] = EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT;
+        attribs[idx++] = static_cast<EGLint>(dmabuf.modifier & 0xFFFFFFFF);
+        attribs[idx++] = EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT;
+        attribs[idx++] = static_cast<EGLint>((dmabuf.modifier >> 32) & 0xFFFFFFFF);
+    }
 
     attribs[idx++] = EGL_NONE;
 
@@ -230,11 +252,13 @@ bool TerminalSurface::importDmaBufFrame(const khostty_frame_dmabuf_s& dmabuf) {
     }
 
     glBindTexture(GL_TEXTURE_2D, m_texture);
+    while (glGetError() != GL_NO_ERROR) {}
     s_glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, image);
+    GLenum err = glGetError();
     glBindTexture(GL_TEXTURE_2D, 0);
 
     s_eglDestroyImageKHR(m_eglDisplay, image);
-    return true;
+    return (err == GL_NO_ERROR);
 }
 
 void TerminalSurface::uploadMemoryFrame(const khostty_frame_memory_s& memory) {
@@ -318,8 +342,28 @@ void TerminalSurface::keyPressEvent(QKeyEvent* event) {
     key.keycode = static_cast<uint32_t>(event->nativeScanCode());
 
     QByteArray textUtf8 = event->text().toUtf8();
+
+    uint32_t unshifted = 0;
+    if (event->key() >= Qt::Key_A && event->key() <= Qt::Key_Z) {
+        unshifted = static_cast<uint32_t>((event->key() - Qt::Key_A) + 'a');
+    } else if (event->key() <= 0xFFFF) {
+        unshifted = static_cast<uint32_t>(event->key());
+    }
+
+    if (event->modifiers() & Qt::ControlModifier) {
+        if (event->key() >= Qt::Key_A && event->key() <= Qt::Key_Z) {
+            textUtf8 = QByteArray(1, static_cast<char>((event->key() - Qt::Key_A) + 'a'));
+        } else if (event->key() >= 0x20 && event->key() <= 0x7E) {
+            textUtf8 = QByteArray(1, static_cast<char>(event->key()));
+        } else {
+            textUtf8.clear();
+        }
+    } else if (!textUtf8.isEmpty() && (static_cast<unsigned char>(textUtf8.at(0)) < 0x20 || static_cast<unsigned char>(textUtf8.at(0)) == 0x7F)) {
+        textUtf8.clear();
+    }
+
     key.text = textUtf8.isEmpty() ? nullptr : textUtf8.constData();
-    key.unshifted_codepoint = event->key() <= 0xFFFF ? static_cast<uint32_t>(event->key()) : 0;
+    key.unshifted_codepoint = unshifted;
 
     bool handled = ghostty_surface_key(m_surface, key);
     if (handled) {
@@ -338,8 +382,28 @@ void TerminalSurface::keyReleaseEvent(QKeyEvent* event) {
     key.keycode = static_cast<uint32_t>(event->nativeScanCode());
 
     QByteArray textUtf8 = event->text().toUtf8();
+
+    uint32_t unshifted = 0;
+    if (event->key() >= Qt::Key_A && event->key() <= Qt::Key_Z) {
+        unshifted = static_cast<uint32_t>((event->key() - Qt::Key_A) + 'a');
+    } else if (event->key() <= 0xFFFF) {
+        unshifted = static_cast<uint32_t>(event->key());
+    }
+
+    if (event->modifiers() & Qt::ControlModifier) {
+        if (event->key() >= Qt::Key_A && event->key() <= Qt::Key_Z) {
+            textUtf8 = QByteArray(1, static_cast<char>((event->key() - Qt::Key_A) + 'a'));
+        } else if (event->key() >= 0x20 && event->key() <= 0x7E) {
+            textUtf8 = QByteArray(1, static_cast<char>(event->key()));
+        } else {
+            textUtf8.clear();
+        }
+    } else if (!textUtf8.isEmpty() && (static_cast<unsigned char>(textUtf8.at(0)) < 0x20 || static_cast<unsigned char>(textUtf8.at(0)) == 0x7F)) {
+        textUtf8.clear();
+    }
+
     key.text = textUtf8.isEmpty() ? nullptr : textUtf8.constData();
-    key.unshifted_codepoint = event->key() <= 0xFFFF ? static_cast<uint32_t>(event->key()) : 0;
+    key.unshifted_codepoint = unshifted;
 
     ghostty_surface_key(m_surface, key);
     event->accept();
@@ -434,6 +498,27 @@ bool TerminalSurface::handleAction(const ghostty_action_s& action) {
                 QString pwd = QString::fromUtf8(action.action.pwd.pwd);
                 emit pwdChanged(pwd);
             }
+            return true;
+
+        case GHOSTTY_ACTION_NEW_TAB:
+            emit GhosttyCore::instance().newTabRequested();
+            return true;
+
+        case GHOSTTY_ACTION_NEW_SPLIT:
+            emit newSplitRequested(action.action.new_split);
+            return true;
+
+        case GHOSTTY_ACTION_GOTO_SPLIT:
+            emit gotoSplitRequested(action.action.goto_split);
+            return true;
+
+        case GHOSTTY_ACTION_GOTO_TAB:
+            emit gotoTabRequested(static_cast<int>(action.action.goto_tab));
+            return true;
+
+        case GHOSTTY_ACTION_MOVE_TAB:
+            if (action.action.move_tab.amount > 0) emit nextTabRequested();
+            else emit previousTabRequested();
             return true;
 
         case GHOSTTY_ACTION_RING_BELL:

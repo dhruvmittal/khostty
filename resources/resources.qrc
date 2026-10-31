@@ -2,6 +2,9 @@
     <qresource prefix="/kxmlgui5/khostty">
         <file>khosttyui.rc</file>
     </qresource>
+    <qresource prefix="/kxmlgui5/com.github.khostty">
+        <file>khosttyui.rc</file>
+    </qresource>
     <qresource prefix="/">
         <file>khosttyui.rc</file>
     </qresource>

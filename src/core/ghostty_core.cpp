@@ -56,6 +56,10 @@ bool GhosttyCore::initialize(int argc, char** argv) {
     }
 
     m_initialized = true;
+
+    connect(&m_tickTimer, &QTimer::timeout, this, &GhosttyCore::tick);
+    m_tickTimer.start(16);
+
     return true;
 }
 
@@ -64,6 +68,7 @@ void GhosttyCore::shutdown() {
         return;
     }
     m_initialized = false;
+    m_tickTimer.stop();
 
     m_surfaces.clear();
 
@@ -92,9 +97,19 @@ TerminalSurface* GhosttyCore::findSurface(ghostty_surface_t surface) const {
     return m_surfaces.value(surface, nullptr);
 }
 
+void GhosttyCore::tick() {
+    m_tickPending.store(false);
+    if (m_app && m_initialized) {
+        ghostty_app_tick(m_app);
+    }
+}
+
 void GhosttyCore::wakeupCallback(void* userdata) {
-    Q_UNUSED(userdata);
-    // Background tick event from libghostty.
+    auto* self = static_cast<GhosttyCore*>(userdata);
+    if (!self) return;
+    if (!self->m_tickPending.exchange(true)) {
+        QMetaObject::invokeMethod(self, &GhosttyCore::tick, Qt::QueuedConnection);
+    }
 }
 
 bool GhosttyCore::actionCallback(ghostty_app_t app, ghostty_target_s target, ghostty_action_s action) {
@@ -113,6 +128,9 @@ bool GhosttyCore::actionCallback(ghostty_app_t app, ghostty_target_s target, gho
                 return true;
             case GHOSTTY_ACTION_NEW_WINDOW:
                 emit self.newWindowRequested();
+                return true;
+            case GHOSTTY_ACTION_NEW_TAB:
+                emit self.newTabRequested();
                 return true;
             default:
                 break;
@@ -227,10 +245,7 @@ void GhosttyCore::writeClipboardCallback(
 }
 
 void GhosttyCore::closeSurfaceCallback(void* userdata, bool process_exited) {
-    ghostty_surface_t surface = static_cast<ghostty_surface_t>(userdata);
-    if (!surface) return;
-
-    TerminalSurface* widget = GhosttyCore::instance().findSurface(surface);
+    TerminalSurface* widget = static_cast<TerminalSurface*>(userdata);
     if (widget) {
         QMetaObject::invokeMethod(widget, [widget, process_exited]() {
             widget->handleProcessExited(process_exited);

@@ -1,5 +1,6 @@
 #include <QApplication>
 #include <QCommandLineParser>
+#include <QIcon>
 #include <KAboutData>
 #include <KLocalizedString>
 #include "core/ghostty_core.h"
@@ -17,7 +18,10 @@ int main(int argc, char* argv[]) {
         KAboutLicense::MIT,
         i18n("(c) 2026 Khostty Developers")
     );
+    aboutData.setDesktopFileName(QStringLiteral("com.github.khostty"));
     KAboutData::setApplicationData(aboutData);
+    QApplication::setDesktopFileName(QStringLiteral("com.github.khostty"));
+    QApplication::setWindowIcon(QIcon::fromTheme(QStringLiteral("utilities-terminal")));
 
     QCommandLineParser parser;
     aboutData.setupCommandLine(&parser);

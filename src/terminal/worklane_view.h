@@ -17,6 +17,7 @@ public:
 
     TerminalSurface* activeSurface() const;
     int columnCount() const;
+    QString activeTitle() const { return m_activeTitle; }
 
     TerminalSurface* addColumn();
     TerminalSurface* splitCurrentVertical();
@@ -26,15 +27,19 @@ public:
     void focusRightColumn();
     void focusUpSplit();
     void focusDownSplit();
+    void equalizeSplits();
+    void toggleSplitZoom();
 
 signals:
     void activeSurfaceChanged(TerminalSurface* surface);
     void titleChanged(const QString& title);
+    void empty();
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
+    void setupSurface(TerminalSurface* surface);
     void setActiveSurface(TerminalSurface* surface);
     void ensureSurfaceVisible(TerminalSurface* surface);
     QSplitter* findSplitterForSurface(TerminalSurface* surface) const;
@@ -43,4 +48,6 @@ private:
     QHBoxLayout* m_columnsLayout = nullptr;
     QList<QSplitter*> m_columns;
     TerminalSurface* m_activeSurface = nullptr;
+    QString m_activeTitle;
+    bool m_isZoomed = false;
 };

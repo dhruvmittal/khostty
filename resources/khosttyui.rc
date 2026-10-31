@@ -25,6 +25,9 @@
     </Menu>
     <Menu name="view">
       <text>&amp;View</text>
+      <Action name="next_tab" />
+      <Action name="prev_tab" />
+      <Separator />
       <Action name="view_zoom_in" />
       <Action name="view_zoom_out" />
       <Action name="view_zoom_reset" />
@@ -35,6 +38,8 @@
       <Action name="new_split_down" />
       <Action name="focus_prev_column" />
       <Action name="focus_next_column" />
+      <Action name="focus_up" />
+      <Action name="focus_down" />
       <Action name="toggle_split_zoom" />
       <Action name="equalize_splits" />
     </Menu>

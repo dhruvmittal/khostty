@@ -34,20 +34,13 @@ int WorklaneView::columnCount() const {
     return m_columns.size();
 }
 
-TerminalSurface* WorklaneView::addColumn() {
-    auto* splitter = new QSplitter(Qt::Vertical, m_container);
-    splitter->setChildrenCollapsible(false);
-    splitter->setMinimumWidth(400);
-
-    auto* surface = new TerminalSurface(splitter);
+void WorklaneView::setupSurface(TerminalSurface* surface) {
+    if (!surface) return;
     surface->installEventFilter(this);
-    splitter->addWidget(surface);
-
-    m_columns.append(splitter);
-    m_columnsLayout->addWidget(splitter);
 
     connect(surface, &TerminalSurface::titleChanged, this, [this, surface](const QString& title) {
         if (surface == m_activeSurface) {
+            m_activeTitle = title;
             emit titleChanged(title);
         }
     });
@@ -64,7 +57,8 @@ TerminalSurface* WorklaneView::addColumn() {
         }
 
         if (m_columns.isEmpty()) {
-            addColumn();
+            m_activeSurface = nullptr;
+            emit empty();
         } else {
             // Focus first available surface in last column
             QSplitter* lastSplitter = m_columns.last();
@@ -76,6 +70,46 @@ TerminalSurface* WorklaneView::addColumn() {
             }
         }
     });
+
+    connect(surface, &TerminalSurface::newSplitRequested, this, [this](ghostty_action_split_direction_e dir) {
+        if (dir == GHOSTTY_SPLIT_DIRECTION_DOWN || dir == GHOSTTY_SPLIT_DIRECTION_UP) {
+            splitCurrentVertical();
+        } else {
+            addColumn();
+        }
+    });
+
+    connect(surface, &TerminalSurface::gotoSplitRequested, this, [this](ghostty_action_goto_split_e dir) {
+        switch (dir) {
+            case GHOSTTY_GOTO_SPLIT_LEFT:
+            case GHOSTTY_GOTO_SPLIT_PREVIOUS:
+                focusLeftColumn();
+                break;
+            case GHOSTTY_GOTO_SPLIT_RIGHT:
+            case GHOSTTY_GOTO_SPLIT_NEXT:
+                focusRightColumn();
+                break;
+            case GHOSTTY_GOTO_SPLIT_UP:
+                focusUpSplit();
+                break;
+            case GHOSTTY_GOTO_SPLIT_DOWN:
+                focusDownSplit();
+                break;
+        }
+    });
+}
+
+TerminalSurface* WorklaneView::addColumn() {
+    auto* splitter = new QSplitter(Qt::Vertical, m_container);
+    splitter->setChildrenCollapsible(false);
+    splitter->setMinimumWidth(400);
+
+    auto* surface = new TerminalSurface(splitter);
+    setupSurface(surface);
+    splitter->addWidget(surface);
+
+    m_columns.append(splitter);
+    m_columnsLayout->addWidget(splitter);
 
     setActiveSurface(surface);
     return surface;
@@ -92,40 +126,10 @@ TerminalSurface* WorklaneView::splitCurrentVertical() {
     }
 
     auto* surface = new TerminalSurface(splitter);
-    surface->installEventFilter(this);
+    setupSurface(surface);
 
     int idx = splitter->indexOf(m_activeSurface);
     splitter->insertWidget(idx + 1, surface);
-
-    connect(surface, &TerminalSurface::titleChanged, this, [this, surface](const QString& title) {
-        if (surface == m_activeSurface) {
-            emit titleChanged(title);
-        }
-    });
-
-    connect(surface, &TerminalSurface::closeRequested, this, [this, surface]() {
-        QSplitter* parentSplitter = findSplitterForSurface(surface);
-        if (parentSplitter) {
-            delete surface;
-            if (parentSplitter->count() == 0) {
-                m_columns.removeAll(parentSplitter);
-                m_columnsLayout->removeWidget(parentSplitter);
-                delete parentSplitter;
-            }
-        }
-
-        if (m_columns.isEmpty()) {
-            addColumn();
-        } else {
-            QSplitter* lastSplitter = m_columns.last();
-            if (lastSplitter->count() > 0) {
-                auto* nextSurface = qobject_cast<TerminalSurface*>(lastSplitter->widget(0));
-                if (nextSurface) {
-                    setActiveSurface(nextSurface);
-                }
-            }
-        }
-    });
 
     setActiveSurface(surface);
     return surface;
@@ -192,6 +196,42 @@ void WorklaneView::setActiveSurface(TerminalSurface* surface) {
         m_activeSurface->setFocus();
         ensureSurfaceVisible(m_activeSurface);
         emit activeSurfaceChanged(m_activeSurface);
+        emit titleChanged(m_activeTitle);
+    }
+}
+
+void WorklaneView::equalizeSplits() {
+    if (m_columns.isEmpty()) return;
+    for (auto* splitter : m_columns) {
+        int count = splitter->count();
+        if (count > 0) {
+            QList<int> sizes;
+            int total = splitter->height();
+            int part = std::max(1, total / count);
+            for (int i = 0; i < count; ++i) sizes << part;
+            splitter->setSizes(sizes);
+        }
+    }
+}
+
+void WorklaneView::toggleSplitZoom() {
+    if (!m_activeSurface) return;
+    QSplitter* splitter = findSplitterForSurface(m_activeSurface);
+    if (!splitter || splitter->count() <= 1) return;
+
+    if (m_isZoomed) {
+        for (int i = 0; i < splitter->count(); ++i) {
+            splitter->widget(i)->show();
+        }
+        m_isZoomed = false;
+    } else {
+        for (int i = 0; i < splitter->count(); ++i) {
+            QWidget* w = splitter->widget(i);
+            if (w != m_activeSurface) {
+                w->hide();
+            }
+        }
+        m_isZoomed = true;
     }
 }
 

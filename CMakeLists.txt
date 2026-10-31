@@ -30,6 +30,7 @@ find_package(KF6 6.0 REQUIRED COMPONENTS
     CoreAddons
     I18n
     Notifications
+    WidgetsAddons
     OPTIONAL_COMPONENTS
     WindowSystem
     GlobalAccel
@@ -87,6 +88,7 @@ target_link_libraries(khostty PRIVATE
     KF6::CoreAddons
     KF6::I18n
     KF6::Notifications
+    KF6::WidgetsAddons
 )
 
 if(TARGET KF6::WindowSystem)
@@ -107,11 +109,11 @@ endif()
 include(GNUInstallDirs)
 install(TARGETS khostty RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/dist/linux/org.kde.khostty.desktop")
-    install(FILES "dist/linux/org.kde.khostty.desktop"
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/dist/linux/com.github.khostty.desktop")
+    install(FILES "dist/linux/com.github.khostty.desktop"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
 endif()
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/dist/linux/org.kde.khostty.notifyrc")
-    install(FILES "dist/linux/org.kde.khostty.notifyrc"
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/dist/linux/com.github.khostty.notifyrc")
+    install(FILES "dist/linux/com.github.khostty.notifyrc"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/knotifications6")
 endif()
