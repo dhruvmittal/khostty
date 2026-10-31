@@ -41,6 +41,10 @@ find_package(LayerShellQt QUIET)
 # Libghostty resolution:
 # If GHOSTTY_PREFIX is provided (from Nix or Arch), use it directly.
 # Otherwise, fall back to building from vendor/ghostty submodule via cmake/BuildGhosttyBridge.cmake
+if(NOT GHOSTTY_PREFIX AND DEFINED ENV{GHOSTTY_PREFIX})
+    set(GHOSTTY_PREFIX "$ENV{GHOSTTY_PREFIX}")
+endif()
+
 if(GHOSTTY_PREFIX)
     set(GHOSTTY_INCLUDE_DIR "${GHOSTTY_PREFIX}/include")
     set(GHOSTTY_LIB_DIR "${GHOSTTY_PREFIX}/lib")

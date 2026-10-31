@@ -57,8 +57,10 @@ bool GhosttyCore::initialize(int argc, char** argv) {
 
     m_initialized = true;
 
+    // Ghostty uses wakeupCallback for event-driven ticks.
+    // Keep a relaxed 500ms heartbeat timer as a safeguard rather than 16ms busy-polling.
     connect(&m_tickTimer, &QTimer::timeout, this, &GhosttyCore::tick);
-    m_tickTimer.start(16);
+    m_tickTimer.start(500);
 
     return true;
 }

@@ -187,20 +187,8 @@ void TerminalSurface::resizeGL(int w, int h) {
     if (!m_surface) return;
 
     double dpr = devicePixelRatioF();
-    uint32_t px_w = static_cast<uint32_t>(std::max(1, w) * dpr);
-    uint32_t px_h = static_cast<uint32_t>(std::max(1, h) * dpr);
-
-    ghostty_surface_set_content_scale(m_surface, dpr, dpr);
-    ghostty_surface_set_size(m_surface, px_w, px_h);
-}
-
-void TerminalSurface::resizeEvent(QResizeEvent* event) {
-    QOpenGLWidget::resizeEvent(event);
-    if (!m_surface) return;
-
-    double dpr = devicePixelRatioF();
-    uint32_t px_w = static_cast<uint32_t>(std::max(1, width()) * dpr);
-    uint32_t px_h = static_cast<uint32_t>(std::max(1, height()) * dpr);
+    uint32_t px_w = static_cast<uint32_t>(std::max(1, w));
+    uint32_t px_h = static_cast<uint32_t>(std::max(1, h));
 
     ghostty_surface_set_content_scale(m_surface, dpr, dpr);
     ghostty_surface_set_size(m_surface, px_w, px_h);
@@ -333,37 +321,72 @@ ghostty_input_mouse_button_e TerminalSurface::translateMouseButton(Qt::MouseButt
     }
 }
 
-void TerminalSurface::keyPressEvent(QKeyEvent* event) {
-    if (!m_surface) return;
-
+ghostty_input_key_s TerminalSurface::buildGhosttyKeyEvent(
+    QKeyEvent* event,
+    ghostty_input_action_e action,
+    QByteArray& textStorage) const
+{
     ghostty_input_key_s key = {};
-    key.action = event->isAutoRepeat() ? GHOSTTY_ACTION_REPEAT : GHOSTTY_ACTION_PRESS;
+    key.action = action;
     key.mods = translateModifiers(event->modifiers());
     key.keycode = static_cast<uint32_t>(event->nativeScanCode());
 
-    QByteArray textUtf8 = event->text().toUtf8();
-
+    textStorage = event->text().toUtf8();
     uint32_t unshifted = 0;
-    if (event->key() >= Qt::Key_A && event->key() <= Qt::Key_Z) {
-        unshifted = static_cast<uint32_t>((event->key() - Qt::Key_A) + 'a');
-    } else if (event->key() <= 0xFFFF) {
-        unshifted = static_cast<uint32_t>(event->key());
+    int qkey = event->key();
+
+    switch (qkey) {
+        case Qt::Key_Return:
+        case Qt::Key_Enter:
+            unshifted = '\r';
+            textStorage = "\r";
+            break;
+        case Qt::Key_Tab:
+            unshifted = '\t';
+            textStorage = "\t";
+            break;
+        case Qt::Key_Backspace:
+            unshifted = 0x7F;
+            textStorage = "\x7f";
+            break;
+        case Qt::Key_Escape:
+            unshifted = 0x1B;
+            textStorage = "\x1b";
+            break;
+        default:
+            if (qkey >= Qt::Key_A && qkey <= Qt::Key_Z) {
+                unshifted = static_cast<uint32_t>((qkey - Qt::Key_A) + 'a');
+            } else if (qkey <= 0xFFFF) {
+                unshifted = static_cast<uint32_t>(qkey);
+            }
+
+            if (event->modifiers() & Qt::ControlModifier) {
+                if (qkey >= Qt::Key_A && qkey <= Qt::Key_Z) {
+                    textStorage = QByteArray(1, static_cast<char>((qkey - Qt::Key_A) + 'a'));
+                } else if (qkey >= 0x20 && qkey <= 0x7E) {
+                    textStorage = QByteArray(1, static_cast<char>(qkey));
+                } else {
+                    textStorage.clear();
+                }
+            } else if (!textStorage.isEmpty() &&
+                       (static_cast<unsigned char>(textStorage.at(0)) < 0x20 ||
+                        static_cast<unsigned char>(textStorage.at(0)) == 0x7F)) {
+                textStorage.clear();
+            }
+            break;
     }
 
-    if (event->modifiers() & Qt::ControlModifier) {
-        if (event->key() >= Qt::Key_A && event->key() <= Qt::Key_Z) {
-            textUtf8 = QByteArray(1, static_cast<char>((event->key() - Qt::Key_A) + 'a'));
-        } else if (event->key() >= 0x20 && event->key() <= 0x7E) {
-            textUtf8 = QByteArray(1, static_cast<char>(event->key()));
-        } else {
-            textUtf8.clear();
-        }
-    } else if (!textUtf8.isEmpty() && (static_cast<unsigned char>(textUtf8.at(0)) < 0x20 || static_cast<unsigned char>(textUtf8.at(0)) == 0x7F)) {
-        textUtf8.clear();
-    }
-
-    key.text = textUtf8.isEmpty() ? nullptr : textUtf8.constData();
+    key.text = textStorage.isEmpty() ? nullptr : textStorage.constData();
     key.unshifted_codepoint = unshifted;
+    return key;
+}
+
+void TerminalSurface::keyPressEvent(QKeyEvent* event) {
+    if (!m_surface) return;
+
+    QByteArray textStorage;
+    ghostty_input_action_e action = event->isAutoRepeat() ? GHOSTTY_ACTION_REPEAT : GHOSTTY_ACTION_PRESS;
+    ghostty_input_key_s key = buildGhosttyKeyEvent(event, action, textStorage);
 
     bool handled = ghostty_surface_key(m_surface, key);
     if (handled) {
@@ -376,34 +399,8 @@ void TerminalSurface::keyPressEvent(QKeyEvent* event) {
 void TerminalSurface::keyReleaseEvent(QKeyEvent* event) {
     if (!m_surface) return;
 
-    ghostty_input_key_s key = {};
-    key.action = GHOSTTY_ACTION_RELEASE;
-    key.mods = translateModifiers(event->modifiers());
-    key.keycode = static_cast<uint32_t>(event->nativeScanCode());
-
-    QByteArray textUtf8 = event->text().toUtf8();
-
-    uint32_t unshifted = 0;
-    if (event->key() >= Qt::Key_A && event->key() <= Qt::Key_Z) {
-        unshifted = static_cast<uint32_t>((event->key() - Qt::Key_A) + 'a');
-    } else if (event->key() <= 0xFFFF) {
-        unshifted = static_cast<uint32_t>(event->key());
-    }
-
-    if (event->modifiers() & Qt::ControlModifier) {
-        if (event->key() >= Qt::Key_A && event->key() <= Qt::Key_Z) {
-            textUtf8 = QByteArray(1, static_cast<char>((event->key() - Qt::Key_A) + 'a'));
-        } else if (event->key() >= 0x20 && event->key() <= 0x7E) {
-            textUtf8 = QByteArray(1, static_cast<char>(event->key()));
-        } else {
-            textUtf8.clear();
-        }
-    } else if (!textUtf8.isEmpty() && (static_cast<unsigned char>(textUtf8.at(0)) < 0x20 || static_cast<unsigned char>(textUtf8.at(0)) == 0x7F)) {
-        textUtf8.clear();
-    }
-
-    key.text = textUtf8.isEmpty() ? nullptr : textUtf8.constData();
-    key.unshifted_codepoint = unshifted;
+    QByteArray textStorage;
+    ghostty_input_key_s key = buildGhosttyKeyEvent(event, GHOSTTY_ACTION_RELEASE, textStorage);
 
     ghostty_surface_key(m_surface, key);
     event->accept();

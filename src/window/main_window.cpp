@@ -404,6 +404,7 @@ void MainWindow::pasteText() {
 
 void MainWindow::showCommandBar() {
     auto* bar = new KCommandBar(this);
+    bar->setAttribute(Qt::WA_DeleteOnClose);
     KCommandBar::ActionGroup group;
     group.name = QStringLiteral("Actions");
     group.actions = actionCollection()->actions();

@@ -39,7 +39,6 @@ signals:
 protected:
     void initializeGL() override;
     void resizeGL(int w, int h) override;
-    void resizeEvent(QResizeEvent* event) override;
     void paintGL() override;
 
     void keyPressEvent(QKeyEvent* event) override;
@@ -58,6 +57,7 @@ private:
     void uploadMemoryFrame(const khostty_frame_memory_s& memory);
     ghostty_input_mods_e translateModifiers(Qt::KeyboardModifiers qmods) const;
     ghostty_input_mouse_button_e translateMouseButton(Qt::MouseButton btn) const;
+    ghostty_input_key_s buildGhosttyKeyEvent(QKeyEvent* event, ghostty_input_action_e action, QByteArray& textStorage) const;
 
     ghostty_surface_t m_surface = nullptr;
 
