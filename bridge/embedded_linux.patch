@@ -1,0 +1,159 @@
+--- a/include/ghostty.h
++++ b/include/ghostty.h
+@@ -70,6 +70,7 @@
+   GHOSTTY_PLATFORM_INVALID,
+   GHOSTTY_PLATFORM_MACOS,
+   GHOSTTY_PLATFORM_IOS,
++  GHOSTTY_PLATFORM_LINUX,
+ } ghostty_platform_e;
+ 
+ typedef enum {
+@@ -494,9 +495,14 @@
+   void* uiview;
+ } ghostty_platform_ios_s;
+ 
++typedef struct {
++  void* egl_display;
++} ghostty_platform_linux_s;
++
+ typedef union {
+   ghostty_platform_macos_s macos;
+   ghostty_platform_ios_s ios;
++  ghostty_platform_linux_s linux_platform;
+ } ghostty_platform_u;
+ 
+ typedef enum {
+--- a/src/apprt/embedded.zig
++++ b/src/apprt/embedded.zig
+@@ -382,6 +382,7 @@
+ pub const Platform = union(PlatformTag) {
+     macos: MacOS,
+     ios: IOS,
++    linux: Linux,
+ 
+     // If our build target for libghostty is not darwin then we do
+     // not include macos support at all.
+@@ -395,6 +396,10 @@
+         uiview: objc.Object,
+     } else void;
+ 
++    pub const Linux = struct {
++        egl_display: ?*anyopaque = null,
++    };
++
+     // The C ABI compatible version of this union. The tag is expected
+     // to be stored elsewhere.
+     pub const C = extern union {
+@@ -404,6 +409,10 @@
+ 
+         ios: extern struct {
+             uiview: ?*anyopaque,
++        },
++
++        linux_platform: extern struct {
++            egl_display: ?*anyopaque,
+         },
+     };
+ 
+@@ -424,6 +433,8 @@
+                     break :ios error.UIViewMustBeSet);
+                 break :ios .{ .ios = .{ .uiview = uiview } };
+             } else error.UnsupportedPlatform,
++
++            .linux => .{ .linux = .{ .egl_display = c_platform.linux_platform.egl_display } },
+         };
+     }
+ };
+@@ -434,6 +445,7 @@
+ 
+     macos = 1,
+     ios = 2,
++    linux = 3,
+ };
+ 
+ pub const EnvVar = extern struct {
+@@ -704,11 +716,8 @@
+             .standard => true,
+             .selection => self.app.opts.supports_selection_clipboard,
+ 
+-            // No embedder can serve the primary selection: the embedding
+-            // API has no option to declare support for it, and macOS (the
+-            // only GUI embedder) has no primary selection. The selection
+-            // flag above covers a distinct custom pasteboard, not this.
+-            .primary => false,
++            // On Linux, the selection clipboard is the standard primary selection.
++            .primary => self.app.opts.supports_selection_clipboard,
+         };
+     }
+ 
+@@ -1217,6 +1226,17 @@
+         var env = try global.environMap();
+         errdefer env.deinit();
+ 
++        if (comptime builtin.target.os.tag == .linux) {
++            global.syncEnviron();
++            _ = env.orderedRemove("XDG_ACTIVATION_TOKEN");
++            _ = env.orderedRemove("INVOCATION_ID");
++            _ = env.orderedRemove("JOURNAL_STREAM");
++            _ = env.orderedRemove("NOTIFY_SOCKET");
++            _ = env.orderedRemove("GIO_LAUNCHED_DESKTOP_FILE");
++            _ = env.orderedRemove("GIO_LAUNCHED_DESKTOP_FILE_PID");
++            _ = env.orderedRemove("DESKTOP_STARTUP_ID");
++        }
++
+         if (comptime builtin.target.os.tag.isDarwin()) {
+             if (env.get("__XCODE_BUILT_PRODUCTS_DIR_PATHS") != null) {
+                 _ = env.orderedRemove("__XCODE_BUILT_PRODUCTS_DIR_PATHS");
+@@ -1251,8 +1271,11 @@
+     }
+ 
+     pub fn renderDeviceOptions(self: *const Surface) !renderer.Device.Options {
+-        // The Metal renderer currently does not have any options
+-        _ = self;
++        if (comptime builtin.target.os.tag == .linux) {
++            return .{
++                .display = @ptrCast(self.platform.linux.egl_display),
++            };
++        }
+         return .{};
+     }
+ };
+--- a/src/build/GhosttyFrameData.zig
++++ b/src/build/GhosttyFrameData.zig
+@@ -9,15 +9,12 @@
+ output: std.Build.LazyPath,
+ 
+ pub fn init(b: *std.Build) !GhosttyFrameData {
+-    const dist = distResources(b);
+-
+     // Generate the Zig source file that embeds the compressed data
+     const wf = b.addWriteFiles();
+-    _ = wf.addCopyFile(dist.framedata.path(b), "framedata.compressed");
+     const zig_file = wf.add("framedata.zig",
+         \\//! This file is auto-generated. Do not edit.
+         \\
+-        \\pub const compressed = @embedFile("framedata.compressed");
++        \\pub const compressed: []const u8 = "";
+         \\
+     );
+ 
+--- a/src/build/SharedDeps.zig
++++ b/src/build/SharedDeps.zig
+@@ -654,7 +654,7 @@
+     }
+ 
+     // If we're building an exe then we have additional dependencies.
+-    if (step.kind != .lib) {
++    if (step.kind != .lib or self.config.renderer == .opengl) {
+         // We always statically compile glad
+         step.root_module.addIncludePath(b.path("vendor/glad/include/"));
+         step.root_module.addCSourceFile(.{
+@@ -663,7 +663,7 @@
+         });
+ 
+         // Link EGL for GTK.
+-        if (self.config.app_runtime == .gtk) {
++        if (self.config.app_runtime == .gtk or (target.result.os.tag == .linux and self.config.renderer == .opengl)) {
+             step.root_module.addCSourceFile(.{
+                 .file = b.path("vendor/glad/src/glad_egl.c"),
+                 .flags = &.{},

@@ -1,0 +1,8 @@
+build/
+result
+result-*
+.zig-cache/
+zig-out/
+*.o
+*.a
+*.so

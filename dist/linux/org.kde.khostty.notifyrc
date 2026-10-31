@@ -1,0 +1,20 @@
+[Global]
+IconName=utilities-terminal
+Comment=Khostty Terminal Emulator
+
+[Event/bell]
+Name=Bell in visible session
+Comment=A terminal bell was triggered
+Action=Sound
+Sound=dialog-information
+
+[Event/command_finished]
+Name=Long running command completed
+Comment=A command in an unfocused tab or split finished executing
+Action=Popup
+
+[Event/attention_needed]
+Name=Process waiting for input
+Comment=A command in an unfocused tab or split requires user input
+Action=Popup
+Urgency=High

@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gui name="khostty"
+     version="1"
+     xmlns="http://www.kde.org/standards/kxmlgui/1.0"
+     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+     xsi:schemaLocation="http://www.kde.org/standards/kxmlgui/1.0
+                         http://www.kde.org/standards/kxmlgui/1.0/kxmlgui.xsd">
+  <MenuBar>
+    <Menu name="file">
+      <text>&amp;File</text>
+      <Action name="new_tab" />
+      <Action name="new_window" />
+      <Separator />
+      <Action name="close_tab" />
+      <Action name="close_window" />
+      <Separator />
+      <Action name="file_quit" />
+    </Menu>
+    <Menu name="edit">
+      <text>&amp;Edit</text>
+      <Action name="edit_copy" />
+      <Action name="edit_paste" />
+      <Separator />
+      <Action name="edit_find" />
+    </Menu>
+    <Menu name="view">
+      <text>&amp;View</text>
+      <Action name="view_zoom_in" />
+      <Action name="view_zoom_out" />
+      <Action name="view_zoom_reset" />
+    </Menu>
+    <Menu name="worklanes">
+      <text>&amp;Worklanes</text>
+      <Action name="new_split_right" />
+      <Action name="new_split_down" />
+      <Action name="focus_prev_column" />
+      <Action name="focus_next_column" />
+      <Action name="toggle_split_zoom" />
+      <Action name="equalize_splits" />
+    </Menu>
+    <Menu name="settings">
+      <text>&amp;Settings</text>
+      <Action name="options_show_menubar" />
+      <Action name="options_configure_keybinding" />
+      <Action name="options_configure" />
+    </Menu>
+  </MenuBar>
+</gui>
