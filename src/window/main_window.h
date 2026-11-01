@@ -19,7 +19,7 @@ public:
     WorklaneView* currentWorklane() const;
     TerminalSurface* activeSurface() const;
 
-private slots:
+public slots:
     void newWindow();
     void newTab();
     void closeCurrentTab();

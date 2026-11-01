@@ -1,5 +1,6 @@
 #include "terminal/terminal_surface.h"
 #include "core/ghostty_core.h"
+#include "window/main_window.h"
 
 #include <QGuiApplication>
 #include <QKeyEvent>
@@ -65,11 +66,13 @@ TerminalSurface::TerminalSurface(QWidget* parent, const QString& workingDirector
     config.scale_factor = devicePixelRatioF();
     config.userdata = this;
 
-    QByteArray wdUtf8 = workingDirectory.toUtf8();
-    if (!wdUtf8.isEmpty()) {
-        config.working_directory = wdUtf8.constData();
-        m_currentPwd = workingDirectory;
+    QString effectiveDir = workingDirectory.trimmed();
+    if (effectiveDir.isEmpty()) {
+        effectiveDir = QDir::homePath();
     }
+    QByteArray wdUtf8 = effectiveDir.toUtf8();
+    config.working_directory = wdUtf8.constData();
+    m_currentPwd = effectiveDir;
 
     // Dedicated Khostty font configuration from khosttyrc
     KConfigGroup fontGroup(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("Font"));
@@ -479,6 +482,22 @@ void TerminalSurface::keyReleaseEvent(QKeyEvent* event) {
 void TerminalSurface::mousePressEvent(QMouseEvent* event) {
     if (!m_surface) return;
 
+    // Send mouse position in unscaled logical points.
+    // Ghostty's cursorPosToPixels() multiplies by scale_factor internally!
+    ghostty_surface_mouse_pos(
+        m_surface,
+        event->position().x(),
+        event->position().y(),
+        translateModifiers(event->modifiers())
+    );
+
+    // Ctrl+Click on detected URL immediately opens it
+    if (event->button() == Qt::LeftButton && (event->modifiers() & Qt::ControlModifier) && !m_hoveredUrl.isEmpty()) {
+        QDesktopServices::openUrl(QUrl::fromUserInput(m_hoveredUrl));
+        event->accept();
+        return;
+    }
+
     if (event->button() == Qt::RightButton) {
         bool mouseCaptured = ghostty_surface_mouse_captured(m_surface);
         if (!mouseCaptured || (event->modifiers() & Qt::ShiftModifier)) {
@@ -499,6 +518,12 @@ void TerminalSurface::mousePressEvent(QMouseEvent* event) {
 
 void TerminalSurface::mouseReleaseEvent(QMouseEvent* event) {
     if (!m_surface) return;
+    ghostty_surface_mouse_pos(
+        m_surface,
+        event->position().x(),
+        event->position().y(),
+        translateModifiers(event->modifiers())
+    );
     ghostty_surface_mouse_button(
         m_surface,
         GHOSTTY_MOUSE_RELEASE,
@@ -510,11 +535,11 @@ void TerminalSurface::mouseReleaseEvent(QMouseEvent* event) {
 
 void TerminalSurface::mouseMoveEvent(QMouseEvent* event) {
     if (!m_surface) return;
-    double dpr = devicePixelRatioF();
+    // Pass unscaled logical coordinates directly; Ghostty scales with scale_factor internally.
     ghostty_surface_mouse_pos(
         m_surface,
-        event->position().x() * dpr,
-        event->position().y() * dpr,
+        event->position().x(),
+        event->position().y(),
         translateModifiers(event->modifiers())
     );
     event->accept();
@@ -531,10 +556,15 @@ void TerminalSurface::wheelEvent(QWheelEvent* event) {
         return;
     }
 
+    double xoff = event->angleDelta().x() / 120.0;
+    double yoff = event->angleDelta().y() / 120.0;
+    if (xoff == 0.0 && event->angleDelta().x() != 0) xoff = event->angleDelta().x() > 0 ? 1.0 : -1.0;
+    if (yoff == 0.0 && event->angleDelta().y() != 0) yoff = event->angleDelta().y() > 0 ? 1.0 : -1.0;
+
     ghostty_surface_mouse_scroll(
         m_surface,
-        event->angleDelta().x(),
-        event->angleDelta().y(),
+        xoff,
+        yoff,
         0
     );
     event->accept();
@@ -734,24 +764,8 @@ bool TerminalSurface::handleAction(const ghostty_action_s& action) {
 void TerminalSurface::showContextMenu(const QPoint& globalPos) {
     QMenu menu(this);
 
-    QAction* copyAction = menu.addAction(QIcon::fromTheme(QStringLiteral("edit-copy")), i18n("&Copy"));
-    bool hasSelection = m_surface && ghostty_surface_has_selection(m_surface);
-    copyAction->setEnabled(hasSelection);
-    connect(copyAction, &QAction::triggered, this, [this]() {
-        if (m_surface) {
-            ghostty_surface_binding_action(m_surface, "copy_to_clipboard", 17);
-        }
-    });
-
-    QAction* pasteAction = menu.addAction(QIcon::fromTheme(QStringLiteral("edit-paste")), i18n("&Paste"));
-    connect(pasteAction, &QAction::triggered, this, [this]() {
-        if (m_surface) {
-            ghostty_surface_binding_action(m_surface, "paste_from_clipboard", 21);
-        }
-    });
-
+    // 1. Hyperlink actions (if hovering over a URL)
     if (!m_hoveredUrl.isEmpty()) {
-        menu.addSeparator();
         QAction* openLinkAction = menu.addAction(QIcon::fromTheme(QStringLiteral("internet-services")), i18n("Open Link"));
         connect(openLinkAction, &QAction::triggered, this, [this]() {
             QDesktopServices::openUrl(QUrl::fromUserInput(m_hoveredUrl));
@@ -761,22 +775,107 @@ void TerminalSurface::showContextMenu(const QPoint& globalPos) {
         connect(copyLinkAction, &QAction::triggered, this, [this]() {
             QGuiApplication::clipboard()->setText(m_hoveredUrl);
         });
+        menu.addSeparator();
     }
 
+    // 2. Clipboard actions with KDE icons & standard shortcuts
+    QAction* copyAction = menu.addAction(QIcon::fromTheme(QStringLiteral("edit-copy")), i18n("&Copy"));
+    copyAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C));
+    bool hasSelection = m_surface && ghostty_surface_has_selection(m_surface);
+    copyAction->setEnabled(hasSelection);
+    connect(copyAction, &QAction::triggered, this, [this]() {
+        if (m_surface) {
+            ghostty_surface_binding_action(m_surface, "copy_to_clipboard", 17);
+        }
+    });
+
+    QAction* pasteAction = menu.addAction(QIcon::fromTheme(QStringLiteral("edit-paste")), i18n("&Paste"));
+    pasteAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_V));
+    connect(pasteAction, &QAction::triggered, this, [this]() {
+        if (m_surface) {
+            ghostty_surface_binding_action(m_surface, "paste_from_clipboard", 21);
+        }
+    });
+
     menu.addSeparator();
-    QAction* splitRight = menu.addAction(QIcon::fromTheme(QStringLiteral("view-split-left-right")), i18n("Split &Right"));
+
+    // 3. Open in File Manager (Konsole integration)
+    QString cwd = currentWorkingDirectory();
+    QAction* openFolderAction = menu.addAction(QIcon::fromTheme(QStringLiteral("system-file-manager")), i18n("Open File Manager"));
+    openFolderAction->setToolTip(cwd);
+    connect(openFolderAction, &QAction::triggered, this, [cwd]() {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(cwd));
+    });
+
+    menu.addSeparator();
+
+    // 4. Clear Scrollback
+    QAction* clearAction = menu.addAction(QIcon::fromTheme(QStringLiteral("edit-clear")), i18n("Clear Scrollback"));
+    clearAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_K));
+    connect(clearAction, &QAction::triggered, this, [this]() {
+        if (m_surface) {
+            ghostty_surface_binding_action(m_surface, "clear_screen", 12);
+        }
+    });
+
+    menu.addSeparator();
+
+    // 5. Split View Submenu
+    auto* mainWin = qobject_cast<MainWindow*>(window());
+    QMenu* splitSubmenu = menu.addMenu(QIcon::fromTheme(QStringLiteral("view-split-left-right")), i18n("Split View"));
+
+    QAction* splitRight = splitSubmenu->addAction(QIcon::fromTheme(QStringLiteral("view-split-left-right")), i18n("Split &Right"));
+    splitRight->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
     connect(splitRight, &QAction::triggered, this, [this]() {
         emit splitRequested(Qt::Horizontal);
     });
 
-    QAction* splitDown = menu.addAction(QIcon::fromTheme(QStringLiteral("view-split-top-bottom")), i18n("Split &Down"));
+    QAction* splitDown = splitSubmenu->addAction(QIcon::fromTheme(QStringLiteral("view-split-top-bottom")), i18n("Split &Down"));
+    splitDown->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_E));
     connect(splitDown, &QAction::triggered, this, [this]() {
         emit splitRequested(Qt::Vertical);
     });
 
+    splitSubmenu->addSeparator();
+
+    QAction* zoomSplit = splitSubmenu->addAction(QIcon::fromTheme(QStringLiteral("zoom-fit-best")), i18n("Toggle Split Zoom"));
+    zoomSplit->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Return));
+    connect(zoomSplit, &QAction::triggered, this, [mainWin]() {
+        if (mainWin) mainWin->toggleSplitZoom();
+    });
+
+    QAction* equalizeSplits = splitSubmenu->addAction(QIcon::fromTheme(QStringLiteral("view-restore")), i18n("Equalize Splits"));
+    equalizeSplits->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_Equal));
+    connect(equalizeSplits, &QAction::triggered, this, [mainWin]() {
+        if (mainWin) mainWin->equalizeSplits();
+    });
+
+    splitSubmenu->addSeparator();
+
+    QAction* closeSplit = splitSubmenu->addAction(QIcon::fromTheme(QStringLiteral("window-close")), i18n("Close Split"));
+    closeSplit->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_W));
+    connect(closeSplit, &QAction::triggered, this, &TerminalSurface::closeRequested);
+
+    // 6. Tabs & Windows
+    QAction* newTabAction = menu.addAction(QIcon::fromTheme(QStringLiteral("tab-new")), i18n("New &Tab"));
+    newTabAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_T));
+    connect(newTabAction, &QAction::triggered, this, [mainWin]() {
+        if (mainWin) mainWin->newTab();
+    });
+
+    QAction* newWinAction = menu.addAction(QIcon::fromTheme(QStringLiteral("window-new")), i18n("New &Window"));
+    newWinAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_N));
+    connect(newWinAction, &QAction::triggered, this, [mainWin]() {
+        if (mainWin) mainWin->newWindow();
+    });
+
     menu.addSeparator();
-    QAction* closeAction = menu.addAction(QIcon::fromTheme(QStringLiteral("window-close")), i18n("&Close"));
-    connect(closeAction, &QAction::triggered, this, &TerminalSurface::closeRequested);
+
+    // 7. Configure Khostty
+    QAction* configAction = menu.addAction(QIcon::fromTheme(QStringLiteral("preferences-system")), i18n("Configure Khostty..."));
+    connect(configAction, &QAction::triggered, this, [mainWin]() {
+        if (mainWin) mainWin->showPreferencesDialog();
+    });
 
     menu.exec(globalPos);
 }

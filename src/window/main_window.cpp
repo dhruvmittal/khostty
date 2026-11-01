@@ -129,7 +129,11 @@ void MainWindow::updateTabBarVisibility() {
 }
 
 WorklaneView* MainWindow::createTab(const QString& title, const QString& initialDir) {
-    auto* worklane = new WorklaneView(m_stack, initialDir);
+    QString dir = initialDir.trimmed();
+    if (dir.isEmpty()) {
+        dir = QDir::homePath();
+    }
+    auto* worklane = new WorklaneView(m_stack, dir);
 
     QString tabTitle = title.isEmpty() ? i18n("Terminal") : title;
     int idx = m_stack->addWidget(worklane);
@@ -385,6 +389,9 @@ void MainWindow::newTab() {
         if (curWl && curWl->activeSurface()) {
             initialDir = curWl->activeSurface()->currentWorkingDirectory();
         }
+    }
+    if (initialDir.isEmpty()) {
+        initialDir = QDir::homePath();
     }
     createTab(QString(), initialDir);
 }

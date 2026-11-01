@@ -320,6 +320,11 @@ QString GhosttyCore::writeRuntimeConfig() {
     out << "keybind = ctrl+i=text:\\x09\n";
     out << "keybind = ctrl+m=text:\\x0d\n";
 
+    // Disable implicit ghostty PWD inheritance so Khostty has deterministic control
+    out << "window-inherit-working-directory = false\n";
+    out << "tab-inherit-working-directory = false\n";
+    out << "split-inherit-working-directory = false\n";
+
     file.close();
     return runtimeConf;
 }

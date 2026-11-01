@@ -11,6 +11,7 @@
 #include <QResizeEvent>
 #include <QKeyEvent>
 #include <QTimer>
+#include <QDir>
 #include <QLineEdit>
 #include <QLabel>
 #include <QToolButton>
@@ -329,12 +330,17 @@ TerminalSurface* WorklaneView::addColumnAfter(KhosttySplitter* targetCol, const 
     auto* colSplitter = new KhosttySplitter(Qt::Vertical, m_canvas);
     colSplitter->setMinimumHeight(std::max(100, viewportH));
 
-    QString dir = initialDir;
+    QString dir = initialDir.trimmed();
     if (dir.isEmpty()) {
-        KConfigGroup genCfg(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("General"));
-        bool inherit = genCfg.readEntry("NewSplitInheritsPwd", true);
-        if (inherit && m_activeSurface) {
-            dir = m_activeSurface->currentWorkingDirectory();
+        if (!m_columns.isEmpty()) {
+            KConfigGroup genCfg(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("General"));
+            bool inherit = genCfg.readEntry("NewSplitInheritsPwd", true);
+            if (inherit && m_activeSurface) {
+                dir = m_activeSurface->currentWorkingDirectory();
+            }
+        }
+        if (dir.isEmpty()) {
+            dir = QDir::homePath();
         }
     }
 
@@ -388,12 +394,18 @@ TerminalSurface* WorklaneView::splitVertical(TerminalSurface* target, const QStr
         return addColumn(initialDir);
     }
 
-    QString dir = initialDir;
+    QString dir = initialDir.trimmed();
     if (dir.isEmpty()) {
         KConfigGroup genCfg(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("General"));
         bool inherit = genCfg.readEntry("NewSplitInheritsPwd", true);
-        if (inherit && target) {
-            dir = target->currentWorkingDirectory();
+        if (inherit) {
+            TerminalSurface* baseSurface = target ? target : m_activeSurface;
+            if (baseSurface) {
+                dir = baseSurface->currentWorkingDirectory();
+            }
+        }
+        if (dir.isEmpty()) {
+            dir = QDir::homePath();
         }
     }
 
