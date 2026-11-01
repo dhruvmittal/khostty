@@ -1,4 +1,5 @@
 #include "window/main_window.h"
+#include "window/worklane_sidebar.h"
 #include "terminal/worklane_view.h"
 #include "terminal/terminal_surface.h"
 #include "core/ghostty_core.h"
@@ -17,6 +18,7 @@
 #include <QAction>
 #include <QTabBar>
 #include <QStackedWidget>
+#include <QSplitter>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QMenu>
@@ -58,13 +60,28 @@ MainWindow::MainWindow(QWidget* parent)
 
     m_stack = new QStackedWidget(this);
 
-    auto* central = new QWidget(this);
-    auto* layout = new QVBoxLayout(central);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(0);
-    layout->addWidget(m_tabBar);
-    layout->addWidget(m_stack, 1);
-    setCentralWidget(central);
+    m_sidebar = new WorklaneSidebar(this, this);
+    m_sidebar->setVisible(false);
+    connect(m_sidebar, &WorklaneSidebar::newWorklaneRequested, this, &MainWindow::newTab);
+
+    // Main horizontal splitter holding [ WorklaneSidebar | ContentArea ]
+    m_mainSplitter = new QSplitter(Qt::Horizontal, this);
+    m_mainSplitter->setHandleWidth(1);
+    m_mainSplitter->setChildrenCollapsible(false);
+    m_mainSplitter->addWidget(m_sidebar);
+
+    auto* rightArea = new QWidget(m_mainSplitter);
+    auto* rightLayout = new QVBoxLayout(rightArea);
+    rightLayout->setContentsMargins(0, 0, 0, 0);
+    rightLayout->setSpacing(0);
+    rightLayout->addWidget(m_tabBar);
+    rightLayout->addWidget(m_stack, 1);
+    m_mainSplitter->addWidget(rightArea);
+
+    m_mainSplitter->setStretchFactor(0, 0);
+    m_mainSplitter->setStretchFactor(1, 1);
+
+    setCentralWidget(m_mainSplitter);
 
     connect(m_tabBar, &QTabBar::currentChanged, m_stack, &QStackedWidget::setCurrentIndex);
     connect(m_tabBar, &QTabBar::currentChanged, this, &MainWindow::onTabChanged);
@@ -118,13 +135,94 @@ MainWindow::MainWindow(QWidget* parent)
 
 MainWindow::~MainWindow() = default;
 
+int MainWindow::tabCount() const {
+    return m_stack ? m_stack->count() : 0;
+}
+
+WorklaneView* MainWindow::worklaneAt(int index) const {
+    if (!m_stack || index < 0 || index >= m_stack->count()) return nullptr;
+    return qobject_cast<WorklaneView*>(m_stack->widget(index));
+}
+
+QString MainWindow::tabText(int index) const {
+    if (!m_tabBar || index < 0 || index >= m_tabBar->count()) return QString();
+    return m_tabBar->tabText(index);
+}
+
+void MainWindow::setCurrentTabIndex(int index) {
+    if (m_tabBar && index >= 0 && index < m_tabBar->count()) {
+        m_tabBar->setCurrentIndex(index);
+    }
+}
+
+void MainWindow::toggleSidebar() {
+    m_sidebarVisible = !m_sidebarVisible;
+    if (m_toggleSidebarAction && m_toggleSidebarAction->isChecked() != m_sidebarVisible) {
+        m_toggleSidebarAction->setChecked(m_sidebarVisible);
+    }
+    if (m_sidebar) {
+        if (!m_sidebarVisible) {
+            // Save width before hiding
+            QList<int> currentSizes = m_mainSplitter->sizes();
+            if (!currentSizes.isEmpty() && currentSizes[0] >= 120) {
+                m_sidebarSavedWidth = currentSizes[0];
+            }
+        }
+        m_sidebar->setVisible(m_sidebarVisible);
+        if (m_sidebarVisible) {
+            m_sidebar->refreshTree();
+            QList<int> sizes = m_mainSplitter->sizes();
+            if (sizes.size() >= 2) {
+                int targetW = std::clamp(m_sidebarSavedWidth, 180, 450);
+                sizes[0] = targetW;
+                sizes[1] = std::max(300, sizes[1] - targetW);
+                m_mainSplitter->setSizes(sizes);
+            }
+        }
+    }
+    updateTabBarVisibility();
+}
+
 void MainWindow::updateTabBarVisibility() {
+    if (m_sidebarVisible) {
+        m_tabBar->hide();
+    } else {
+        bool multiTab = m_tabBar->count() > 1;
+        m_tabBar->setVisible(multiTab);
+    }
     bool multiTab = m_tabBar->count() > 1;
-    m_tabBar->setVisible(multiTab);
     for (auto* action : m_tabSwitchActions) {
         if (action) {
             action->setEnabled(multiTab);
         }
+    }
+}
+
+void MainWindow::updateTabTitleWithSplitCount(int index) {
+    if (index < 0 || index >= m_stack->count()) return;
+    auto* worklane = qobject_cast<WorklaneView*>(m_stack->widget(index));
+    if (!worklane) return;
+
+    QString baseTitle = worklane->activeTitle();
+    if (baseTitle.isEmpty()) baseTitle = i18n("Terminal");
+
+    int pCount = worklane->paneCount();
+    QString displayTitle;
+    if (pCount > 1) {
+        displayTitle = QStringLiteral("%1 · %2").arg(baseTitle).arg(pCount);
+    } else {
+        displayTitle = baseTitle;
+    }
+
+    m_tabBar->setTabText(index, displayTitle);
+    m_tabBar->setTabToolTip(index, displayTitle);
+
+    if (worklane == currentWorklane()) {
+        updateTitle(baseTitle);
+    }
+
+    if (m_sidebar && m_sidebarVisible) {
+        m_sidebar->scheduleRefresh();
     }
 }
 
@@ -142,15 +240,17 @@ WorklaneView* MainWindow::createTab(const QString& title, const QString& initial
     m_tabBar->setCurrentIndex(idx);
     updateTabBarVisibility();
 
-    connect(worklane, &WorklaneView::titleChanged, this, [this, worklane](const QString& newTitle) {
+    connect(worklane, &WorklaneView::titleChanged, this, [this, worklane](const QString&) {
         int tabIdx = m_stack->indexOf(worklane);
         if (tabIdx != -1) {
-            QString displayTitle = newTitle.isEmpty() ? i18n("Terminal") : newTitle;
-            m_tabBar->setTabText(tabIdx, displayTitle);
-            m_tabBar->setTabToolTip(tabIdx, displayTitle);
+            updateTabTitleWithSplitCount(tabIdx);
         }
-        if (worklane == currentWorklane()) {
-            updateTitle(newTitle);
+    });
+
+    connect(worklane, &WorklaneView::layoutChanged, this, [this, worklane]() {
+        int tabIdx = m_stack->indexOf(worklane);
+        if (tabIdx != -1) {
+            updateTabTitleWithSplitCount(tabIdx);
         }
     });
 
@@ -171,6 +271,14 @@ WorklaneView* MainWindow::createTab(const QString& title, const QString& initial
         connect(surface, &TerminalSurface::desktopNotification, this, &MainWindow::handleDesktopNotification, Qt::UniqueConnection);
     };
 
+    connect(worklane, &WorklaneView::activeSurfaceChanged, this, [this](TerminalSurface* surface) {
+        if (surface && m_sidebar) {
+            m_sidebar->clearAlert(surface);
+            if (m_sidebarVisible) {
+                m_sidebar->scheduleRefresh();
+            }
+        }
+    });
     connect(worklane, &WorklaneView::activeSurfaceChanged, this, wireSurface);
     if (worklane->activeSurface()) {
         wireSurface(worklane->activeSurface());
@@ -319,6 +427,14 @@ void MainWindow::setupActions() {
     });
     addAction(cmdBarAction);
 
+    // Sidebar Toggle Action (Ctrl+Shift+B)
+    m_toggleSidebarAction = new QAction(i18n("Toggle Worklane Sidebar"), this);
+    m_toggleSidebarAction->setCheckable(true);
+    m_toggleSidebarAction->setChecked(m_sidebarVisible);
+    connect(m_toggleSidebarAction, &QAction::triggered, this, &MainWindow::toggleSidebar);
+    ac->addAction(QStringLiteral("toggle_sidebar"), m_toggleSidebarAction);
+    ac->setDefaultShortcut(m_toggleSidebarAction, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_B));
+
     // Worklane Split Actions (Matching Ghostty Defaults: Ctrl+Shift+O Right, Ctrl+Shift+E Down)
     auto* newColAction = new QAction(i18n("Split Right"), this);
     connect(newColAction, &QAction::triggered, this, &MainWindow::newColumn);
@@ -411,6 +527,10 @@ void MainWindow::closeTab(int index) {
     updateTabBarVisibility();
     page->deleteLater();
 
+    if (m_sidebar && m_sidebarVisible) {
+        m_sidebar->refreshTree();
+    }
+
     if (m_tabBar->count() == 0) {
         close();
     } else {
@@ -448,9 +568,15 @@ void MainWindow::onTabChanged(int index) {
         if (wl) {
             if (wl->activeSurface()) {
                 wl->activeSurface()->setFocus();
+                if (m_sidebar) {
+                    m_sidebar->clearAlert(wl->activeSurface());
+                }
             }
             updateTitle(wl->activeTitle());
         }
+    }
+    if (m_sidebar && m_sidebarVisible) {
+        m_sidebar->refreshTree();
     }
 }
 
@@ -564,6 +690,7 @@ void MainWindow::showPreferencesDialog() {
 
     KConfigGroup appCfg(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("Appearance"));
     bool showHeaderOnlyOnSplit = appCfg.readEntry("ShowHeaderOnlyOnSplit", true);
+    bool showWorklaneScrollbar = appCfg.readEntry("ShowWorklaneScrollbar", false);
 
     auto* hideSingleHeaderCheck = new QCheckBox(
         i18n("Hide pane header when only one terminal is open"),
@@ -571,6 +698,13 @@ void MainWindow::showPreferencesDialog() {
     );
     hideSingleHeaderCheck->setChecked(showHeaderOnlyOnSplit);
     appearanceLayout->addWidget(hideSingleHeaderCheck);
+
+    auto* showScrollbarCheck = new QCheckBox(
+        i18n("Show horizontal scrollbar on worklane canvas when overflowed"),
+        appearanceGroup
+    );
+    showScrollbarCheck->setChecked(showWorklaneScrollbar);
+    appearanceLayout->addWidget(showScrollbarCheck);
 
     layout->addWidget(appearanceGroup);
 
@@ -696,6 +830,7 @@ void MainWindow::showPreferencesDialog() {
 
         KConfigGroup appGroup(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("Appearance"));
         appGroup.writeEntry("ShowHeaderOnlyOnSplit", hideSingleHeaderCheck->isChecked());
+        appGroup.writeEntry("ShowWorklaneScrollbar", showScrollbarCheck->isChecked());
         appGroup.sync();
 
         KConfigGroup fontGroup(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("Font"));
@@ -787,9 +922,17 @@ void MainWindow::syncColorScheme() {
 }
 
 void MainWindow::handleBell() {
+    auto* s = qobject_cast<TerminalSurface*>(sender());
+    if (s && s != activeSurface() && m_sidebar) {
+        m_sidebar->markSurfaceAlert(s, true);
+    }
     KNotification::event(QStringLiteral("bell"), i18n("Bell"), QString(), QStringLiteral("utilities-terminal"));
 }
 
 void MainWindow::handleDesktopNotification(const QString& title, const QString& body) {
+    auto* s = qobject_cast<TerminalSurface*>(sender());
+    if (s && s != activeSurface() && m_sidebar) {
+        m_sidebar->markSurfaceAlert(s, true);
+    }
     KNotification::event(QStringLiteral("command_finished"), title, body, QStringLiteral("utilities-terminal"));
 }

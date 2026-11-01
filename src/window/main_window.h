@@ -5,9 +5,11 @@
 
 class QTabBar;
 class QStackedWidget;
+class QSplitter;
 class WorklaneView;
 class TerminalSurface;
 class KCommandBar;
+class WorklaneSidebar;
 
 class MainWindow : public KXmlGuiWindow {
     Q_OBJECT
@@ -18,10 +20,15 @@ public:
 
     WorklaneView* currentWorklane() const;
     TerminalSurface* activeSurface() const;
+    int tabCount() const;
+    WorklaneView* worklaneAt(int index) const;
+    QString tabText(int index) const;
+    void setCurrentTabIndex(int index);
 
 public slots:
     void newWindow();
     void newTab();
+    void toggleSidebar();
     void closeCurrentTab();
     void closeTab(int index);
     void gotoTab(int tabIdx);
@@ -54,10 +61,16 @@ protected:
 private:
     void setupActions();
     void updateTabBarVisibility();
+    void updateTabTitleWithSplitCount(int index);
     WorklaneView* createTab(const QString& title = QString(), const QString& initialDir = QString());
 
     QTabBar* m_tabBar = nullptr;
     QStackedWidget* m_stack = nullptr;
+    QSplitter* m_mainSplitter = nullptr;
+    WorklaneSidebar* m_sidebar = nullptr;
+    bool m_sidebarVisible = false;
+    int m_sidebarSavedWidth = 240;
     QPointer<KCommandBar> m_commandBar;
+    QAction* m_toggleSidebarAction = nullptr;
     QList<QAction*> m_tabSwitchActions;
 };

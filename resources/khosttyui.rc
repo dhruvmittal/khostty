@@ -27,6 +27,7 @@
     <Menu name="view">
       <text>View</text>
       <Action name="open_kcommand_bar" />
+      <Action name="toggle_sidebar" />
       <Separator />
       <Action name="next_tab" />
       <Action name="prev_tab" />

@@ -116,10 +116,68 @@ int WorklaneView::columnCount() const {
     return m_columns.size();
 }
 
+int WorklaneView::rowCount(int colIdx) const {
+    if (colIdx >= 0 && colIdx < m_columns.size() && m_columns[colIdx]) {
+        return m_columns[colIdx]->count();
+    }
+    return 0;
+}
+
+TerminalSurface* WorklaneView::surfaceAt(int colIdx, int rowIdx) const {
+    if (colIdx >= 0 && colIdx < m_columns.size() && m_columns[colIdx]) {
+        auto* col = m_columns[colIdx];
+        if (rowIdx >= 0 && rowIdx < col->count()) {
+            if (auto* pane = qobject_cast<TerminalPane*>(col->widget(rowIdx))) {
+                return pane->surface();
+            }
+        }
+    }
+    return nullptr;
+}
+
+int WorklaneView::paneCount() const {
+    int total = 0;
+    for (auto* col : m_columns) {
+        if (col) total += col->count();
+    }
+    return total;
+}
+
+QList<TerminalSurface*> WorklaneView::allSurfaces() const {
+    QList<TerminalSurface*> list;
+    for (auto* col : m_columns) {
+        if (!col) continue;
+        for (int i = 0; i < col->count(); ++i) {
+            if (auto* pane = qobject_cast<TerminalPane*>(col->widget(i))) {
+                if (pane->surface()) {
+                    list.append(pane->surface());
+                }
+            }
+        }
+    }
+    return list;
+}
+
 bool WorklaneView::hasAnySplit() const {
     if (m_columns.size() > 1) return true;
     if (m_columns.size() == 1 && m_columns[0]->count() > 1) return true;
     return false;
+}
+
+void WorklaneView::updateScrollBarPolicy() {
+    KConfigGroup appCfg(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("Appearance"));
+    bool showScrollbar = appCfg.readEntry("ShowWorklaneScrollbar", false);
+    if (showScrollbar && m_columns.size() > 1) {
+        setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+        horizontalScrollBar()->setStyleSheet(QStringLiteral(
+            "QScrollBar:horizontal { height: 4px; background: transparent; margin: 0px; }"
+            "QScrollBar::handle:horizontal { background: palette(mid); min-width: 20px; border-radius: 2px; }"
+            "QScrollBar::handle:horizontal:hover { background: palette(highlight); }"
+            "QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0px; }"
+        ));
+    } else {
+        setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    }
 }
 
 void WorklaneView::updatePaneDecorations() {
@@ -127,15 +185,34 @@ void WorklaneView::updatePaneDecorations() {
     bool showHeaderOnlyOnSplit = appearanceConfig.readEntry("ShowHeaderOnlyOnSplit", true);
     bool split = hasAnySplit();
     bool showHeader = !showHeaderOnlyOnSplit || split;
+    int numCols = m_columns.size();
 
-    for (auto* col : m_columns) {
-        for (int i = 0; i < col->count(); ++i) {
-            if (auto* pane = qobject_cast<TerminalPane*>(col->widget(i))) {
+    for (int colIdx = 0; colIdx < numCols; ++colIdx) {
+        auto* col = m_columns[colIdx];
+        if (!col) continue;
+        int rowCount = col->count();
+        for (int rowIdx = 0; rowIdx < rowCount; ++rowIdx) {
+            if (auto* pane = qobject_cast<TerminalPane*>(col->widget(rowIdx))) {
                 pane->setHeaderVisible(showHeader);
                 pane->setBorderVisible(split);
+
+                if (numCols > 1) {
+                    QString posText;
+                    if (rowCount > 1) {
+                        posText = QStringLiteral("Col %1/%2 · %3/%4").arg(colIdx + 1).arg(numCols).arg(rowIdx + 1).arg(rowCount);
+                    } else {
+                        posText = QStringLiteral("Col %1/%2").arg(colIdx + 1).arg(numCols);
+                    }
+                    pane->setPositionText(posText);
+                } else if (rowCount > 1) {
+                    pane->setPositionText(QStringLiteral("Split %1/%2").arg(rowIdx + 1).arg(rowCount));
+                } else {
+                    pane->setPositionText(QString());
+                }
             }
         }
     }
+    updateScrollBarPolicy();
 }
 
 void WorklaneView::rebuildCanvasLayout() {
@@ -371,6 +448,8 @@ TerminalSurface* WorklaneView::addColumnAfter(KhosttySplitter* targetCol, const 
 
     rebuildCanvasLayout();
 
+    emit layoutChanged();
+
     setActiveSurface(surface);
     surface->setFocus();
     ensureSurfaceVisible(surface);
@@ -439,6 +518,8 @@ TerminalSurface* WorklaneView::splitVertical(TerminalSurface* target, const QStr
         updateCanvasLayout();
     }
     updatePaneDecorations();
+
+    emit layoutChanged();
 
     setActiveSurface(surface);
     surface->setFocus();
@@ -514,6 +595,8 @@ void WorklaneView::closeSurface(TerminalSurface* surface) {
         updateCanvasLayout();
     }
     updatePaneDecorations();
+
+    emit layoutChanged();
 
     // Restore scroll position
     horizontalScrollBar()->setValue(savedScroll);

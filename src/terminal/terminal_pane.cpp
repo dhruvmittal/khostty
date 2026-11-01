@@ -37,6 +37,11 @@ TerminalPane::TerminalPane(TerminalSurface* surface, QWidget* parent)
     m_titleLabel = new QLabel(i18n("Terminal"), m_header);
     m_titleLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 
+    // Position indicator pill (e.g. "Col 1/3")
+    m_positionLabel = new QLabel(m_header);
+    m_positionLabel->setStyleSheet(QStringLiteral("color: palette(placeholder-text); font-size: 10px; font-weight: normal; padding: 1px 4px; background: rgba(128,128,128,0.15); border-radius: 3px;"));
+    m_positionLabel->setVisible(false);
+
     // Actions on header
     m_zoomBadgeBtn = new QToolButton(m_header);
     m_zoomBadgeBtn->setFocusPolicy(Qt::NoFocus);
@@ -80,6 +85,7 @@ TerminalPane::TerminalPane(TerminalSurface* surface, QWidget* parent)
 
     headerLayout->addWidget(m_dotIndicator);
     headerLayout->addWidget(m_titleLabel);
+    headerLayout->addWidget(m_positionLabel);
     headerLayout->addWidget(m_zoomBadgeBtn);
     headerLayout->addWidget(m_splitRightBtn);
     headerLayout->addWidget(m_splitDownBtn);
@@ -107,6 +113,17 @@ void TerminalPane::setTitle(const QString& title) {
     m_title = title.isEmpty() ? i18n("Terminal") : title;
     m_titleLabel->setText(m_title);
     m_titleLabel->setToolTip(m_title);
+}
+
+void TerminalPane::setPositionText(const QString& text) {
+    if (!m_positionLabel) return;
+    if (text.isEmpty()) {
+        m_positionLabel->clear();
+        m_positionLabel->setVisible(false);
+    } else {
+        m_positionLabel->setText(text);
+        m_positionLabel->setVisible(true);
+    }
 }
 
 void TerminalPane::setActive(bool active) {

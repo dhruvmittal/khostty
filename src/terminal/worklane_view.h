@@ -21,8 +21,14 @@ public:
 
     TerminalSurface* activeSurface() const;
     int columnCount() const;
+    int rowCount(int colIdx) const;
+    TerminalSurface* surfaceAt(int colIdx, int rowIdx) const;
+    int paneCount() const;
+    QList<TerminalSurface*> allSurfaces() const;
     QString activeTitle() const { return m_activeTitle; }
     bool hasAnySplit() const;
+
+    void updateScrollBarPolicy();
 
     TerminalSurface* addColumn(const QString& initialDir = QString());
     TerminalSurface* addColumnAfter(KhosttySplitter* targetCol = nullptr, const QString& initialDir = QString());
@@ -46,9 +52,12 @@ public:
     void updateCanvasLayout();
     void updatePaneDecorations();
 
+    void ensureSurfaceVisible(TerminalSurface* surface);
+
 signals:
     void activeSurfaceChanged(TerminalSurface* surface);
     void titleChanged(const QString& title);
+    void layoutChanged();
     void empty();
 
 protected:
@@ -60,7 +69,6 @@ private:
     void setupSurface(TerminalSurface* surface);
     void setupPane(TerminalPane* pane);
     void setActiveSurface(TerminalSurface* surface);
-    void ensureSurfaceVisible(TerminalSurface* surface);
     TerminalPane* findPaneForSurface(TerminalSurface* surface) const;
     KhosttySplitter* findSplitterForSurface(TerminalSurface* surface) const;
 

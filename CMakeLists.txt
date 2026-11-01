@@ -71,6 +71,7 @@ add_executable(khostty
     src/terminal/khostty_splitter.cpp
     src/terminal/worklane_separator.cpp
     src/terminal/worklane_view.cpp
+    src/window/worklane_sidebar.cpp
     src/window/main_window.cpp
     resources/resources.qrc
 )

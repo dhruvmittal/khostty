@@ -19,6 +19,7 @@ public:
     bool isActive() const { return m_isActive; }
     void setActive(bool active);
     void setTitle(const QString& title);
+    void setPositionText(const QString& text);
     void setHeaderVisible(bool visible);
     void setBorderVisible(bool visible);
     void setZoomed(bool zoomed);
@@ -42,6 +43,7 @@ private:
     QWidget* m_header = nullptr;
     QLabel* m_dotIndicator = nullptr;
     QLabel* m_titleLabel = nullptr;
+    QLabel* m_positionLabel = nullptr;
     QToolButton* m_zoomBadgeBtn = nullptr;
     QToolButton* m_splitRightBtn = nullptr;
     QToolButton* m_splitDownBtn = nullptr;
