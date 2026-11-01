@@ -96,8 +96,9 @@ void WorklaneView::rebuildCanvasLayout() {
             m_separators.append(sep);
             m_canvasLayout->addWidget(sep);
         } else {
-            col->setFixedWidth(std::max(viewportW, 400));
-            m_canvasLayout->addWidget(col);
+            col->setMinimumWidth(200);
+            col->setMaximumWidth(QWIDGETSIZE_MAX);
+            m_canvasLayout->addWidget(col, 1);
         }
     } else {
         for (int i = 0; i < m_columns.size(); ++i) {
@@ -126,16 +127,24 @@ void WorklaneView::updateCanvasLayout() {
     bool splitPresent = hasAnySplit();
     int maxAllowed = splitPresent ? std::max(280, static_cast<int>(viewportW * 0.90)) : viewportW;
 
-    for (auto* col : m_columns) {
-        if (splitPresent && col->width() > maxAllowed) {
-            col->setFixedWidth(maxAllowed);
-        }
+    if (!splitPresent && m_columns.size() == 1) {
+        auto* col = m_columns[0];
+        col->setMinimumWidth(200);
+        col->setMaximumWidth(QWIDGETSIZE_MAX);
         col->setFixedHeight(viewportH);
-        totalW += col->width();
-    }
-    for (auto* sep : m_separators) {
-        sep->setFixedHeight(viewportH);
-        totalW += sep->width();
+        totalW = viewportW;
+    } else {
+        for (auto* col : m_columns) {
+            if (splitPresent && col->width() > maxAllowed) {
+                col->setFixedWidth(maxAllowed);
+            }
+            col->setFixedHeight(viewportH);
+            totalW += col->width();
+        }
+        for (auto* sep : m_separators) {
+            sep->setFixedHeight(viewportH);
+            totalW += sep->width();
+        }
     }
 
     int finalW = std::max(totalW, viewportW);

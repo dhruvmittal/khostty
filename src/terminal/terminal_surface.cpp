@@ -43,6 +43,7 @@ TerminalSurface::TerminalSurface(QWidget* parent)
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
     setAttribute(Qt::WA_InputMethodEnabled, true);
+    setUpdateBehavior(QOpenGLWidget::NoPartialUpdate);
 
     ghostty_app_t app = GhosttyCore::instance().app();
     if (!app) {
@@ -207,8 +208,8 @@ void TerminalSurface::resizeGL(int w, int h) {
     if (!m_surface) return;
 
     double dpr = devicePixelRatioF();
-    uint32_t px_w = static_cast<uint32_t>(std::max(1, w));
-    uint32_t px_h = static_cast<uint32_t>(std::max(1, h));
+    uint32_t px_w = static_cast<uint32_t>(std::max(1.0, std::round(w * dpr)));
+    uint32_t px_h = static_cast<uint32_t>(std::max(1.0, std::round(h * dpr)));
 
     ghostty_surface_set_content_scale(m_surface, dpr, dpr);
     ghostty_surface_set_size(m_surface, px_w, px_h);
