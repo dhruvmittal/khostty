@@ -28,6 +28,12 @@
 #include <QFontDatabase>
 #include <KSharedConfig>
 #include <KConfigGroup>
+#include <KXMLGUIFactory>
+#include <QDesktopServices>
+#include <QStandardPaths>
+#include <QDir>
+#include <QFile>
+#include <QTextStream>
 
 MainWindow::MainWindow(QWidget* parent)
     : KXmlGuiWindow(parent)
@@ -313,6 +319,7 @@ void MainWindow::setupActions() {
 
     // Settings
     KStandardAction::preferences(this, &MainWindow::showPreferencesDialog, ac);
+    KStandardAction::keyBindings(guiFactory(), &KXMLGUIFactory::showConfigureShortcutsDialog, ac);
 }
 
 void MainWindow::newWindow() {
@@ -444,10 +451,27 @@ void MainWindow::pasteText() {
 void MainWindow::showPreferencesDialog() {
     QDialog dialog(this);
     dialog.setWindowTitle(i18n("Configure — Khostty"));
-    dialog.setMinimumWidth(400);
+    dialog.setMinimumWidth(440);
 
     auto* layout = new QVBoxLayout(&dialog);
 
+    // Appearance & Layout Settings
+    auto* appearanceGroup = new QGroupBox(i18n("Appearance & Layout"), &dialog);
+    auto* appearanceLayout = new QVBoxLayout(appearanceGroup);
+
+    KConfigGroup appCfg(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("Appearance"));
+    bool showHeaderOnlyOnSplit = appCfg.readEntry("ShowHeaderOnlyOnSplit", true);
+
+    auto* hideSingleHeaderCheck = new QCheckBox(
+        i18n("Hide pane header when only one terminal is open"),
+        appearanceGroup
+    );
+    hideSingleHeaderCheck->setChecked(showHeaderOnlyOnSplit);
+    appearanceLayout->addWidget(hideSingleHeaderCheck);
+
+    layout->addWidget(appearanceGroup);
+
+    // Font Settings
     auto* fontGroup = new QGroupBox(i18n("Font Settings"), &dialog);
     auto* fontLayout = new QVBoxLayout(fontGroup);
 
@@ -456,9 +480,9 @@ void MainWindow::showPreferencesDialog() {
     if (sysPt <= 0.0f) sysPt = static_cast<float>(sysFixed.pointSize());
     if (sysPt <= 0.0f) sysPt = 10.0f;
 
-    KConfigGroup cfg(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("Font"));
-    bool useSys = cfg.readEntry("UseSystemFixedFont", true);
-    float currentCustom = cfg.readEntry("FontSize", 0.0f);
+    KConfigGroup fontCfg(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("Font"));
+    bool useSys = fontCfg.readEntry("UseSystemFixedFont", true);
+    float currentCustom = fontCfg.readEntry("FontSize", 0.0f);
     if (currentCustom <= 0.0f) currentCustom = sysPt;
 
     auto* useSysCheck = new QCheckBox(
@@ -486,6 +510,48 @@ void MainWindow::showPreferencesDialog() {
 
     layout->addWidget(fontGroup);
 
+    // Ghostty Terminal Engine (Power Users)
+    auto* engineGroup = new QGroupBox(i18n("Ghostty Terminal Engine"), &dialog);
+    auto* engineLayout = new QVBoxLayout(engineGroup);
+
+    auto* engineDescLabel = new QLabel(
+        i18n("Terminal engine features (cursor shape, scrollback, themes, keybindings) are powered by Ghostty and configured in ~/.config/ghostty/config."),
+        engineGroup
+    );
+    engineDescLabel->setWordWrap(true);
+    engineLayout->addWidget(engineDescLabel);
+
+    auto* engineBtnLayout = new QHBoxLayout();
+    auto* editConfigBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("document-edit")), i18n("Edit Ghostty Config..."), engineGroup);
+    auto* reloadConfigBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("view-refresh")), i18n("Reload Ghostty Config"), engineGroup);
+
+    connect(editConfigBtn, &QPushButton::clicked, &dialog, []() {
+        QString configDir = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + QStringLiteral("/ghostty");
+        QDir().mkpath(configDir);
+        QString configPath = configDir + QStringLiteral("/config");
+        QFile configFile(configPath);
+        if (!configFile.exists()) {
+            if (configFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+                QTextStream out(&configFile);
+                out << "# Ghostty Terminal Configuration\n";
+                out << "# Refer to https://ghostty.org/docs/config for available options.\n";
+                configFile.close();
+            }
+        }
+        QDesktopServices::openUrl(QUrl::fromLocalFile(configPath));
+    });
+
+    connect(reloadConfigBtn, &QPushButton::clicked, &dialog, []() {
+        GhosttyCore::instance().reloadConfig();
+    });
+
+    engineBtnLayout->addWidget(editConfigBtn);
+    engineBtnLayout->addWidget(reloadConfigBtn);
+    engineLayout->addLayout(engineBtnLayout);
+
+    layout->addWidget(engineGroup);
+
+    // Dialog Buttons
     auto* buttonBox = new QDialogButtonBox(
         QDialogButtonBox::Ok | QDialogButtonBox::Cancel | QDialogButtonBox::Apply,
         Qt::Horizontal,
@@ -493,15 +559,25 @@ void MainWindow::showPreferencesDialog() {
     );
     layout->addWidget(buttonBox);
 
-    auto applyChanges = [=]() {
-        KConfigGroup group(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("Font"));
-        group.writeEntry("UseSystemFixedFont", useSysCheck->isChecked());
-        group.writeEntry("FontSize", customSizeSpin->value());
-        group.sync();
+    auto applyChanges = [=, this]() {
+        KConfigGroup appGroup(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("Appearance"));
+        appGroup.writeEntry("ShowHeaderOnlyOnSplit", hideSingleHeaderCheck->isChecked());
+        appGroup.sync();
+
+        KConfigGroup fontGroup(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("Font"));
+        fontGroup.writeEntry("UseSystemFixedFont", useSysCheck->isChecked());
+        fontGroup.writeEntry("FontSize", customSizeSpin->value());
+        fontGroup.sync();
 
         for (auto* surface : GhosttyCore::instance().allSurfaces()) {
             if (surface) {
                 surface->applyFontConfig();
+            }
+        }
+
+        for (int i = 0; i < m_stack->count(); ++i) {
+            if (auto* wl = qobject_cast<WorklaneView*>(m_stack->widget(i))) {
+                wl->updatePaneDecorations();
             }
         }
     };

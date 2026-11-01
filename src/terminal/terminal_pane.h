@@ -19,6 +19,8 @@ public:
     bool isActive() const { return m_isActive; }
     void setActive(bool active);
     void setTitle(const QString& title);
+    void setHeaderVisible(bool visible);
+    void setBorderVisible(bool visible);
 
 signals:
     void splitRightRequested();
@@ -42,4 +44,5 @@ private:
     QToolButton* m_closeBtn = nullptr;
     QString m_title;
     bool m_isActive = false;
+    bool m_borderVisible = true;
 };

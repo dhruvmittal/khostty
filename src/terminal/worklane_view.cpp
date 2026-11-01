@@ -3,6 +3,8 @@
 #include "terminal/terminal_pane.h"
 #include "core/ghostty_core.h"
 
+#include <KSharedConfig>
+#include <KConfigGroup>
 #include <QScrollBar>
 #include <QWheelEvent>
 #include <QResizeEvent>
@@ -42,6 +44,22 @@ bool WorklaneView::hasAnySplit() const {
     if (m_columns.size() > 1) return true;
     if (m_columns.size() == 1 && m_columns[0]->count() > 1) return true;
     return false;
+}
+
+void WorklaneView::updatePaneDecorations() {
+    KConfigGroup appearanceConfig(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("Appearance"));
+    bool showHeaderOnlyOnSplit = appearanceConfig.readEntry("ShowHeaderOnlyOnSplit", true);
+    bool split = hasAnySplit();
+    bool showHeader = !showHeaderOnlyOnSplit || split;
+
+    for (auto* col : m_columns) {
+        for (int i = 0; i < col->count(); ++i) {
+            if (auto* pane = qobject_cast<TerminalPane*>(col->widget(i))) {
+                pane->setHeaderVisible(showHeader);
+                pane->setBorderVisible(split);
+            }
+        }
+    }
 }
 
 void WorklaneView::rebuildCanvasLayout() {
@@ -96,6 +114,7 @@ void WorklaneView::rebuildCanvasLayout() {
     }
 
     updateCanvasLayout();
+    updatePaneDecorations();
     horizontalScrollBar()->setValue(savedScroll);
 }
 
@@ -277,6 +296,7 @@ TerminalSurface* WorklaneView::splitVertical(TerminalSurface* target) {
     } else {
         updateCanvasLayout();
     }
+    updatePaneDecorations();
 
     setActiveSurface(surface);
     surface->setFocus();
@@ -351,6 +371,7 @@ void WorklaneView::closeSurface(TerminalSurface* surface) {
         }
         updateCanvasLayout();
     }
+    updatePaneDecorations();
 
     // Restore scroll position
     horizontalScrollBar()->setValue(savedScroll);

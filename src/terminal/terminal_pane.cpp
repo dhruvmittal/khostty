@@ -121,8 +121,24 @@ void TerminalPane::updateHeaderStyle() {
     }
 }
 
+void TerminalPane::setHeaderVisible(bool visible) {
+    if (m_header) {
+        m_header->setVisible(visible);
+    }
+}
+
+void TerminalPane::setBorderVisible(bool visible) {
+    if (m_borderVisible != visible) {
+        m_borderVisible = visible;
+        update();
+    }
+}
+
 void TerminalPane::paintEvent(QPaintEvent* event) {
     QFrame::paintEvent(event);
+    if (!m_borderVisible) {
+        return;
+    }
     QPainter painter(this);
     if (m_isActive) {
         QColor accent = palette().color(QPalette::Active, QPalette::Highlight);

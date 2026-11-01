@@ -38,6 +38,7 @@ public:
 
     void rebuildCanvasLayout();
     void updateCanvasLayout();
+    void updatePaneDecorations();
 
 signals:
     void activeSurfaceChanged(TerminalSurface* surface);

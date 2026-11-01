@@ -266,3 +266,12 @@ void GhosttyCore::closeSurfaceCallback(void* userdata, bool process_alive) {
         }, Qt::QueuedConnection);
     }
 }
+
+void GhosttyCore::reloadConfig() {
+    if (!m_app) return;
+    ghostty_config_t cfg = ghostty_config_new();
+    ghostty_config_load_default_files(cfg);
+    ghostty_config_finalize(cfg);
+    ghostty_app_update_config(m_app, cfg);
+    ghostty_config_free(cfg);
+}
