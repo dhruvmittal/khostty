@@ -17,6 +17,7 @@ public:
 
     ghostty_surface_t surface() const { return m_surface; }
     QString title() const { return m_title; }
+    QString processName() const;
     QString currentWorkingDirectory() const;
 
     bool handleAction(const ghostty_action_s& action);

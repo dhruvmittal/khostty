@@ -630,6 +630,21 @@ void TerminalSurface::sendText(const QString& text) {
     ghostty_surface_text(m_surface, utf8.constData(), static_cast<uintptr_t>(utf8.size()));
 }
 
+QString TerminalSurface::processName() const {
+    if (m_surface) {
+        uint64_t pid = ghostty_surface_foreground_pid(m_surface);
+        if (pid > 0) {
+            QString commPath = QStringLiteral("/proc/%1/comm").arg(pid);
+            QFile f(commPath);
+            if (f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+                QString name = QString::fromUtf8(f.readAll()).trimmed();
+                if (!name.isEmpty()) return name;
+            }
+        }
+    }
+    return QString();
+}
+
 QString TerminalSurface::currentWorkingDirectory() const {
     if (m_surface) {
         uint64_t pid = ghostty_surface_foreground_pid(m_surface);

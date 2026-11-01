@@ -27,6 +27,7 @@ find_package(KF6 6.0 REQUIRED COMPONENTS
     XmlGui
     Config
     ConfigWidgets
+    ColorScheme
     CoreAddons
     I18n
     Notifications
@@ -93,6 +94,7 @@ target_link_libraries(khostty PRIVATE
     KF6::XmlGui
     KF6::ConfigCore
     KF6::ConfigWidgets
+    KF6::ColorScheme
     KF6::CoreAddons
     KF6::I18n
     KF6::Notifications

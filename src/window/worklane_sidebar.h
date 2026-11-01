@@ -23,9 +23,15 @@ public:
     void scheduleRefresh();
     void markSurfaceAlert(TerminalSurface* surface, bool alert);
     void clearAlert(TerminalSurface* surface);
+    QColor accentColor() const;
+    QColor vibrantAccentColor() const;
+    void updateAccentColor();
 
 signals:
     void newWorklaneRequested();
+
+protected:
+    void paintEvent(QPaintEvent* event) override;
 
 private slots:
     void onItemClicked(QTreeWidgetItem* item, int column);
