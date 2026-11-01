@@ -142,7 +142,6 @@ I am using AI tools including Google's Antigravity IDE during development. I am 
 
 ## Contributing
 
-- Please feel free to fork or PR
+- Please feel free to fork or PR me
 - This is a hobby project, so I'm more likely to respond to issues that also come with solutions
-- AI code ok but please write your own issues and PRs, I will probably stop reading if it looks or feels like AI
-- 
+- AI code ok but please write your own issues and PRs, I will probably stop reading if it looks or feels like there's nobody on the other end
