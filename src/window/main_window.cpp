@@ -9,6 +9,7 @@
 #include <KLocalizedString>
 #include <KToolBar>
 #include <KAcceleratorManager>
+#include <KMessageBox>
 #include <QApplication>
 #include <QClipboard>
 #include <QKeySequence>
@@ -18,6 +19,7 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QMenu>
+#include <QMenuBar>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QGroupBox>
@@ -46,7 +48,12 @@ MainWindow::MainWindow(QWidget* parent)
     m_tabBar->setExpanding(false);
     m_tabBar->setElideMode(Qt::ElideRight);
     m_tabBar->setContextMenuPolicy(Qt::CustomContextMenu);
+    m_tabBar->setFocusPolicy(Qt::NoFocus);
     KAcceleratorManager::setNoAccel(m_tabBar);
+    KAcceleratorManager::setNoAccel(this);
+    if (menuBar()) {
+        KAcceleratorManager::setNoAccel(menuBar());
+    }
 
     m_stack = new QStackedWidget(this);
 
@@ -82,6 +89,9 @@ MainWindow::MainWindow(QWidget* parent)
 
     setupActions();
     setupGUI(Keys | Save | Create, QStringLiteral("khosttyui.rc"));
+    if (menuBar()) {
+        KAcceleratorManager::setNoAccel(menuBar());
+    }
     if (toolBar()) {
         toolBar()->hide();
     }
@@ -90,6 +100,15 @@ MainWindow::MainWindow(QWidget* parent)
     connect(&GhosttyCore::instance(), &GhosttyCore::newTabRequested, this, &MainWindow::newTab);
     connect(&GhosttyCore::instance(), &GhosttyCore::quitRequested, qApp, &QCoreApplication::quit);
 
+    connect(qApp, &QGuiApplication::fontDatabaseChanged, this, [this]() {
+        GhosttyCore::instance().reloadConfig();
+        for (auto* surface : GhosttyCore::instance().allSurfaces()) {
+            if (surface) {
+                surface->applyFontConfig();
+            }
+        }
+    });
+
     resize(1000, 700);
     setWindowTitle(QStringLiteral("Khostty"));
 }
@@ -97,7 +116,13 @@ MainWindow::MainWindow(QWidget* parent)
 MainWindow::~MainWindow() = default;
 
 void MainWindow::updateTabBarVisibility() {
-    m_tabBar->setVisible(m_tabBar->count() > 1);
+    bool multiTab = m_tabBar->count() > 1;
+    m_tabBar->setVisible(multiTab);
+    for (auto* action : m_tabSwitchActions) {
+        if (action) {
+            action->setEnabled(multiTab);
+        }
+    }
 }
 
 WorklaneView* MainWindow::createTab(const QString& title) {
@@ -169,10 +194,15 @@ void MainWindow::setupActions() {
     ac->addAction(QStringLiteral("new_window"), newWinAction);
     ac->setDefaultShortcut(newWinAction, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_N));
 
+    auto* closeActiveAction = new QAction(i18n("Close Active Terminal"), this);
+    connect(closeActiveAction, &QAction::triggered, this, &MainWindow::closeActive);
+    ac->addAction(QStringLiteral("close_active"), closeActiveAction);
+    ac->setDefaultShortcut(closeActiveAction, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_W));
+
     auto* closeTabAction = new QAction(i18n("Close Tab"), this);
     connect(closeTabAction, &QAction::triggered, this, &MainWindow::closeCurrentTab);
     ac->addAction(QStringLiteral("close_tab"), closeTabAction);
-    ac->setDefaultShortcut(closeTabAction, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_W));
+    ac->setDefaultShortcut(closeTabAction, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::ALT | Qt::Key_W));
 
     auto* closeWinAction = new QAction(i18n("Close Window"), this);
     connect(closeWinAction, &QAction::triggered, this, &MainWindow::close);
@@ -192,6 +222,10 @@ void MainWindow::setupActions() {
     pasteAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_V));
     ac->setDefaultShortcut(pasteAction, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_V));
 
+    auto* findAction = KStandardAction::find(this, &MainWindow::findText, ac);
+    findAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F));
+    ac->setDefaultShortcut(findAction, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F));
+
     auto* clearScrollbackAction = new QAction(i18n("Clear Scrollback"), this);
     connect(clearScrollbackAction, &QAction::triggered, this, [this]() {
         TerminalSurface* surface = activeSurface();
@@ -202,6 +236,21 @@ void MainWindow::setupActions() {
     ac->addAction(QStringLiteral("clear_scrollback"), clearScrollbackAction);
     clearScrollbackAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_K));
     ac->setDefaultShortcut(clearScrollbackAction, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_K));
+
+    // View Zoom Actions
+    auto* zoomInAction = KStandardAction::zoomIn(this, &MainWindow::zoomIn, ac);
+    ac->setDefaultShortcuts(zoomInAction, {
+        QKeySequence(Qt::CTRL | Qt::Key_Plus),
+        QKeySequence(Qt::CTRL | Qt::Key_Equal)
+    });
+
+    auto* zoomOutAction = KStandardAction::zoomOut(this, &MainWindow::zoomOut, ac);
+    ac->setDefaultShortcut(zoomOutAction, QKeySequence(Qt::CTRL | Qt::Key_Minus));
+
+    auto* zoomResetAction = new QAction(i18n("Reset Zoom"), this);
+    connect(zoomResetAction, &QAction::triggered, this, &MainWindow::zoomReset);
+    ac->addAction(QStringLiteral("view_zoom_reset"), zoomResetAction);
+    ac->setDefaultShortcut(zoomResetAction, QKeySequence(Qt::CTRL | Qt::Key_0));
 
     // Tab Navigation (Matching Ghostty Defaults: Ctrl+Shift+Left/Right, Ctrl+PageUp/Down)
     auto* nextTabAction = new QAction(i18n("Next Tab"), this);
@@ -221,6 +270,7 @@ void MainWindow::setupActions() {
     });
 
     // Tab Selection Alt+1..8, Alt+9 for last tab
+    m_tabSwitchActions.clear();
     for (int i = 1; i <= 8; ++i) {
         auto* gotoTabAction = new QAction(i18n("Go to Tab %1", i), this);
         connect(gotoTabAction, &QAction::triggered, this, [this, i]() {
@@ -230,6 +280,7 @@ void MainWindow::setupActions() {
         });
         ac->addAction(QStringLiteral("goto_tab_%1").arg(i), gotoTabAction);
         ac->setDefaultShortcut(gotoTabAction, QKeySequence(Qt::ALT | (Qt::Key_0 + i)));
+        m_tabSwitchActions.append(gotoTabAction);
     }
 
     auto* gotoLastTabAction = new QAction(i18n("Go to Last Tab"), this);
@@ -240,6 +291,7 @@ void MainWindow::setupActions() {
     });
     ac->addAction(QStringLiteral("goto_tab_last"), gotoLastTabAction);
     ac->setDefaultShortcut(gotoLastTabAction, QKeySequence(Qt::ALT | Qt::Key_9));
+    m_tabSwitchActions.append(gotoLastTabAction);
 
     // Command Bar
     auto* cmdBarAction = actionCollection()->action(QStringLiteral("open_kcommand_bar"));
@@ -262,18 +314,12 @@ void MainWindow::setupActions() {
     auto* newColAction = new QAction(i18n("Split Right"), this);
     connect(newColAction, &QAction::triggered, this, &MainWindow::newColumn);
     ac->addAction(QStringLiteral("new_split_right"), newColAction);
-    ac->addAction(QStringLiteral("new_column"), newColAction);
     ac->setDefaultShortcut(newColAction, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
 
     auto* splitVertAction = new QAction(i18n("Split Down"), this);
     connect(splitVertAction, &QAction::triggered, this, &MainWindow::splitVertical);
     ac->addAction(QStringLiteral("new_split_down"), splitVertAction);
-    ac->addAction(QStringLiteral("split_vertical"), splitVertAction);
     ac->setDefaultShortcut(splitVertAction, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_E));
-
-    auto* closeActiveAction = new QAction(i18n("Close Active Terminal"), this);
-    connect(closeActiveAction, &QAction::triggered, this, &MainWindow::closeActive);
-    ac->addAction(QStringLiteral("close_active"), closeActiveAction);
 
     // Split Zoom & Equalize (Matching Ghostty: Ctrl+Shift+Enter Zoom, Ctrl+Alt+= Equalize)
     auto* zoomSplitAction = new QAction(i18n("Toggle Split Zoom"), this);
@@ -292,7 +338,6 @@ void MainWindow::setupActions() {
         if (auto* wl = currentWorklane()) wl->focusLeftColumn();
     });
     ac->addAction(QStringLiteral("focus_prev_column"), focusLeftAction);
-    ac->addAction(QStringLiteral("focus_left"), focusLeftAction);
     ac->setDefaultShortcut(focusLeftAction, QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_Left));
 
     auto* focusRightAction = new QAction(i18n("Focus Right Split"), this);
@@ -300,7 +345,6 @@ void MainWindow::setupActions() {
         if (auto* wl = currentWorklane()) wl->focusRightColumn();
     });
     ac->addAction(QStringLiteral("focus_next_column"), focusRightAction);
-    ac->addAction(QStringLiteral("focus_right"), focusRightAction);
     ac->setDefaultShortcut(focusRightAction, QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_Right));
 
     auto* focusUpAction = new QAction(i18n("Focus Up Split"), this);
@@ -405,8 +449,47 @@ void MainWindow::splitVertical() {
 
 void MainWindow::closeActive() {
     auto* wl = currentWorklane();
-    if (wl) {
-        wl->closeActiveSurface();
+    if (!wl) return;
+    auto* s = wl->activeSurface();
+    if (s && s->surface() && ghostty_surface_needs_confirm_quit(s->surface())) {
+        auto res = KMessageBox::warningContinueCancel(
+            this,
+            i18n("A process is running in this terminal. Closing it may terminate the process. Do you want to continue?"),
+            i18n("Confirm Close"),
+            KStandardGuiItem::close()
+        );
+        if (res != KMessageBox::Continue) {
+            return;
+        }
+    }
+    wl->closeActiveSurface();
+}
+
+void MainWindow::findText() {
+    TerminalSurface* surface = activeSurface();
+    if (surface && surface->surface()) {
+        ghostty_surface_binding_action(surface->surface(), "start_search", 12);
+    }
+}
+
+void MainWindow::zoomIn() {
+    TerminalSurface* surface = activeSurface();
+    if (surface && surface->surface()) {
+        ghostty_surface_binding_action(surface->surface(), "increase_font_size:1", 19);
+    }
+}
+
+void MainWindow::zoomOut() {
+    TerminalSurface* surface = activeSurface();
+    if (surface && surface->surface()) {
+        ghostty_surface_binding_action(surface->surface(), "decrease_font_size:1", 19);
+    }
+}
+
+void MainWindow::zoomReset() {
+    TerminalSurface* surface = activeSurface();
+    if (surface && surface->surface()) {
+        ghostty_surface_binding_action(surface->surface(), "reset_font_size", 15);
     }
 }
 
@@ -568,6 +651,8 @@ void MainWindow::showPreferencesDialog() {
         fontGroup.writeEntry("UseSystemFixedFont", useSysCheck->isChecked());
         fontGroup.writeEntry("FontSize", customSizeSpin->value());
         fontGroup.sync();
+
+        GhosttyCore::instance().reloadConfig();
 
         for (auto* surface : GhosttyCore::instance().allSurfaces()) {
             if (surface) {

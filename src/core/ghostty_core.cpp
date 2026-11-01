@@ -5,6 +5,13 @@
 #include <QClipboard>
 #include <QMetaObject>
 #include <QDebug>
+#include <QStandardPaths>
+#include <QDir>
+#include <QFile>
+#include <QTextStream>
+#include <QFontDatabase>
+#include <KSharedConfig>
+#include <KConfigGroup>
 
 GhosttyCore::GhosttyCore() = default;
 
@@ -44,6 +51,10 @@ bool GhosttyCore::initialize(int argc, char** argv) {
     }
 
     ghostty_config_load_default_files(m_config);
+    QString runtimeConf = writeRuntimeConfig();
+    if (!runtimeConf.isEmpty()) {
+        ghostty_config_load_file(m_config, runtimeConf.toUtf8().constData());
+    }
     ghostty_config_finalize(m_config);
 
     ghostty_runtime_config_s runtime_config = {};
@@ -267,10 +278,61 @@ void GhosttyCore::closeSurfaceCallback(void* userdata, bool process_alive) {
     }
 }
 
+QString GhosttyCore::writeRuntimeConfig() {
+    QString runtimeDir = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
+    if (runtimeDir.isEmpty()) {
+        runtimeDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+    }
+    runtimeDir += QStringLiteral("/khostty");
+    QDir().mkpath(runtimeDir);
+    QString runtimeConf = runtimeDir + QStringLiteral("/ghostty_runtime.conf");
+
+    QFile file(runtimeConf);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+        qWarning() << "Failed to open runtime ghostty config file:" << runtimeConf;
+        return QString();
+    }
+
+    QTextStream out(&file);
+    out << "# Auto-generated runtime config for Khostty\n";
+
+    KConfigGroup fontGroup(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("Font"));
+    bool useSystemFixed = fontGroup.readEntry("UseSystemFixedFont", true);
+    if (useSystemFixed) {
+        QFont sysFixed = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+        QString family = sysFixed.family();
+        family.replace(QLatin1Char('\\'), QStringLiteral("\\\\")).replace(QLatin1Char('"'), QStringLiteral("\\\""));
+
+        float pt = static_cast<float>(sysFixed.pointSizeF());
+        if (pt <= 0.0f) pt = static_cast<float>(sysFixed.pointSize());
+        if (pt <= 0.0f) pt = 10.0f;
+
+        out << "font-family = \"\"\n";
+        out << "font-family = \"" << family << "\"\n";
+        out << "font-size = " << pt << "\n";
+    } else {
+        float customSize = fontGroup.readEntry("FontSize", 0.0f);
+        if (customSize > 0.0f) {
+            out << "font-size = " << customSize << "\n";
+        }
+    }
+
+    // Default bindings for fixterms C0 fallback (Ctrl+I -> Tab, Ctrl+M -> Enter)
+    out << "keybind = ctrl+i=text:\\x09\n";
+    out << "keybind = ctrl+m=text:\\x0d\n";
+
+    file.close();
+    return runtimeConf;
+}
+
 void GhosttyCore::reloadConfig() {
     if (!m_app) return;
     ghostty_config_t cfg = ghostty_config_new();
     ghostty_config_load_default_files(cfg);
+    QString runtimeConf = writeRuntimeConfig();
+    if (!runtimeConf.isEmpty()) {
+        ghostty_config_load_file(cfg, runtimeConf.toUtf8().constData());
+    }
     ghostty_config_finalize(cfg);
     ghostty_app_update_config(m_app, cfg);
     ghostty_config_free(cfg);

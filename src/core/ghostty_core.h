@@ -26,6 +26,7 @@ public:
     TerminalSurface* findSurface(ghostty_surface_t surface) const;
     QList<TerminalSurface*> allSurfaces() const { return m_surfaces.values(); }
     void reloadConfig();
+    QString writeRuntimeConfig();
 
 public slots:
     void tick();

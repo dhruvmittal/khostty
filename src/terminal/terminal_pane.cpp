@@ -39,6 +39,7 @@ TerminalPane::TerminalPane(TerminalSurface* surface, QWidget* parent)
 
     // Actions on header
     m_splitRightBtn = new QToolButton(m_header);
+    m_splitRightBtn->setFocusPolicy(Qt::NoFocus);
     m_splitRightBtn->setIcon(QIcon::fromTheme(QStringLiteral("view-split-left-right"), QIcon::fromTheme(QStringLiteral("list-add"))));
     m_splitRightBtn->setToolTip(i18n("Split Right (New Column, Ctrl+Shift+O)"));
     m_splitRightBtn->setAutoRaise(true);
@@ -48,6 +49,7 @@ TerminalPane::TerminalPane(TerminalSurface* surface, QWidget* parent)
     connect(m_splitRightBtn, &QToolButton::clicked, this, &TerminalPane::splitRightRequested);
 
     m_splitDownBtn = new QToolButton(m_header);
+    m_splitDownBtn->setFocusPolicy(Qt::NoFocus);
     m_splitDownBtn->setIcon(QIcon::fromTheme(QStringLiteral("view-split-top-bottom"), QIcon::fromTheme(QStringLiteral("list-add"))));
     m_splitDownBtn->setToolTip(i18n("Split Down (Ctrl+Shift+E)"));
     m_splitDownBtn->setAutoRaise(true);
@@ -57,6 +59,7 @@ TerminalPane::TerminalPane(TerminalSurface* surface, QWidget* parent)
     connect(m_splitDownBtn, &QToolButton::clicked, this, &TerminalPane::splitDownRequested);
 
     m_closeBtn = new QToolButton(m_header);
+    m_closeBtn->setFocusPolicy(Qt::NoFocus);
     m_closeBtn->setIcon(QIcon::fromTheme(QStringLiteral("window-close"), QIcon::fromTheme(QStringLiteral("application-exit"))));
     m_closeBtn->setToolTip(i18n("Close Split (Ctrl+Shift+W)"));
     m_closeBtn->setAutoRaise(true);

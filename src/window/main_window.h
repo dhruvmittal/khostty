@@ -36,6 +36,10 @@ private slots:
     void equalizeSplits();
     void copyText();
     void pasteText();
+    void findText();
+    void zoomIn();
+    void zoomOut();
+    void zoomReset();
     void showPreferencesDialog();
     void showCommandBar();
     void updateTitle(const QString& title);
@@ -52,4 +56,5 @@ private:
     QTabBar* m_tabBar = nullptr;
     QStackedWidget* m_stack = nullptr;
     QPointer<KCommandBar> m_commandBar;
+    QList<QAction*> m_tabSwitchActions;
 };

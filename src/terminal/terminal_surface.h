@@ -40,6 +40,9 @@ signals:
     void toggleCommandPaletteRequested();
 
 protected:
+    bool event(QEvent* event) override;
+    bool focusNextPrevChild(bool next) override;
+
     void initializeGL() override;
     void resizeGL(int w, int h) override;
     void paintGL() override;
@@ -52,6 +55,8 @@ protected:
     void wheelEvent(QWheelEvent* event) override;
     void focusInEvent(QFocusEvent* event) override;
     void focusOutEvent(QFocusEvent* event) override;
+    void inputMethodEvent(QInputMethodEvent* event) override;
+    QVariant inputMethodQuery(Qt::InputMethodQuery query) const override;
 
 private:
     void setupGLResources();
@@ -75,4 +80,5 @@ private:
     void* m_eglDisplay = nullptr;
     bool m_supportsDmaBuf = true;
     QString m_title;
+    bool m_isComposing = false;
 };

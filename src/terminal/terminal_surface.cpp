@@ -42,6 +42,7 @@ TerminalSurface::TerminalSurface(QWidget* parent)
 {
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
+    setAttribute(Qt::WA_InputMethodEnabled, true);
 
     ghostty_app_t app = GhosttyCore::instance().app();
     if (!app) {
@@ -349,8 +350,9 @@ ghostty_input_key_s TerminalSurface::buildGhosttyKeyEvent(
     key.action = action;
     key.mods = translateModifiers(event->modifiers());
     key.keycode = static_cast<uint32_t>(event->nativeScanCode());
+    key.composing = m_isComposing;
 
-    textStorage = event->text().toUtf8();
+    textStorage = (action == GHOSTTY_ACTION_RELEASE) ? QByteArray() : event->text().toUtf8();
     uint32_t unshifted = 0;
     int qkey = event->key();
 
@@ -358,19 +360,23 @@ ghostty_input_key_s TerminalSurface::buildGhosttyKeyEvent(
         case Qt::Key_Return:
         case Qt::Key_Enter:
             unshifted = '\r';
-            textStorage = "\r";
+            if (action != GHOSTTY_ACTION_RELEASE) textStorage = "\r";
             break;
+        case Qt::Key_Backtab:
+            key.mods = static_cast<ghostty_input_mods_e>(key.mods | GHOSTTY_MODS_SHIFT);
+            [[fallthrough]];
         case Qt::Key_Tab:
             unshifted = '\t';
-            textStorage = "\t";
+            if (action != GHOSTTY_ACTION_RELEASE) textStorage = "\t";
+            if (key.keycode == 0) key.keycode = 0x0F;
             break;
         case Qt::Key_Backspace:
             unshifted = 0x7F;
-            textStorage = "\x7f";
+            if (action != GHOSTTY_ACTION_RELEASE) textStorage = "\x7f";
             break;
         case Qt::Key_Escape:
             unshifted = 0x1B;
-            textStorage = "\x1b";
+            if (action != GHOSTTY_ACTION_RELEASE) textStorage = "\x1b";
             break;
         default:
             if (qkey >= Qt::Key_A && qkey <= Qt::Key_Z) {
@@ -379,7 +385,9 @@ ghostty_input_key_s TerminalSurface::buildGhosttyKeyEvent(
                 unshifted = static_cast<uint32_t>(qkey);
             }
 
-            if (event->modifiers() & Qt::ControlModifier) {
+            if (action == GHOSTTY_ACTION_RELEASE) {
+                textStorage.clear();
+            } else if (event->modifiers() & Qt::ControlModifier) {
                 if (qkey == Qt::Key_BracketLeft) {
                     unshifted = 0x1B;
                     textStorage = "\x1b";
@@ -404,15 +412,32 @@ ghostty_input_key_s TerminalSurface::buildGhosttyKeyEvent(
     return key;
 }
 
+bool TerminalSurface::focusNextPrevChild(bool next) {
+    Q_UNUSED(next);
+    // In a terminal emulator, Tab and Shift+Tab belong to the active shell session (e.g. completion).
+    // Suppress Qt's default focus traversal so Tab events are forwarded to keyPressEvent().
+    return false;
+}
+
+bool TerminalSurface::event(QEvent* event) {
+    if (event->type() == QEvent::KeyPress) {
+        auto* keyEvent = static_cast<QKeyEvent*>(event);
+        if (keyEvent->key() == Qt::Key_Tab || keyEvent->key() == Qt::Key_Backtab) {
+            keyPressEvent(keyEvent);
+            return true;
+        }
+    } else if (event->type() == QEvent::KeyRelease) {
+        auto* keyEvent = static_cast<QKeyEvent*>(event);
+        if (keyEvent->key() == Qt::Key_Tab || keyEvent->key() == Qt::Key_Backtab) {
+            keyReleaseEvent(keyEvent);
+            return true;
+        }
+    }
+    return QOpenGLWidget::event(event);
+}
+
 void TerminalSurface::keyPressEvent(QKeyEvent* event) {
     if (!m_surface) return;
-
-    if ((event->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier)) == (Qt::ControlModifier | Qt::ShiftModifier) &&
-        event->key() == Qt::Key_P) {
-        emit toggleCommandPaletteRequested();
-        event->accept();
-        return;
-    }
 
     QByteArray textStorage;
     ghostty_input_action_e action = event->isAutoRepeat() ? GHOSTTY_ACTION_REPEAT : GHOSTTY_ACTION_PRESS;
@@ -502,6 +527,40 @@ void TerminalSurface::focusOutEvent(QFocusEvent* event) {
     if (m_surface) {
         ghostty_surface_set_focus(m_surface, false);
     }
+}
+
+void TerminalSurface::inputMethodEvent(QInputMethodEvent* event) {
+    if (!m_surface) return;
+
+    if (!event->commitString().isEmpty()) {
+        m_isComposing = false;
+        ghostty_surface_preedit(m_surface, nullptr, 0);
+        QByteArray commitUtf8 = event->commitString().toUtf8();
+        ghostty_surface_text(m_surface, commitUtf8.constData(), static_cast<uintptr_t>(commitUtf8.size()));
+    } else if (!event->preeditString().isEmpty()) {
+        m_isComposing = true;
+        QByteArray preeditUtf8 = event->preeditString().toUtf8();
+        ghostty_surface_preedit(m_surface, preeditUtf8.constData(), static_cast<uintptr_t>(preeditUtf8.size()));
+    } else {
+        m_isComposing = false;
+        ghostty_surface_preedit(m_surface, nullptr, 0);
+    }
+    event->accept();
+}
+
+QVariant TerminalSurface::inputMethodQuery(Qt::InputMethodQuery query) const {
+    if (query == Qt::ImCursorRectangle || query == Qt::ImAnchorRectangle) {
+        if (m_surface) {
+            double x = 0, y = 0, w = 0, h = 0;
+            ghostty_surface_ime_point(m_surface, &x, &y, &w, &h);
+            double dpr = devicePixelRatioF();
+            if (dpr > 0.0) {
+                return QRectF(x / dpr, y / dpr, w / dpr, h / dpr).toRect();
+            }
+            return QRectF(x, y, w, h).toRect();
+        }
+    }
+    return QOpenGLWidget::inputMethodQuery(query);
 }
 
 void TerminalSurface::pasteText(const QString& text) {
