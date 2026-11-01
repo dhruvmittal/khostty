@@ -86,12 +86,15 @@
          };
      }
  
-@@ -1217,6 +1226,17 @@
+@@ -1217,6 +1226,20 @@
++        if (comptime builtin.target.os.tag == .linux) {
++            global.syncEnviron();
++        }
++
          var env = try global.environMap();
          errdefer env.deinit();
  
 +        if (comptime builtin.target.os.tag == .linux) {
-+            global.syncEnviron();
 +            _ = env.orderedRemove("XDG_ACTIVATION_TOKEN");
 +            _ = env.orderedRemove("INVOCATION_ID");
 +            _ = env.orderedRemove("JOURNAL_STREAM");
@@ -170,5 +173,16 @@
 @@ -20,1 +20,1 @@
 -            .target = b.graph.host,
 +            .target = b.resolveTargetQuery(.{ .os_tag = .linux, .abi = .musl }),
+--- a/src/global.zig
++++ b/src/global.zig
+@@ -284,6 +284,9 @@
+ pub fn environMap() !std.process.Environ.Map {
+     if (builtin.is_test) return std.testing.environ.createMap(std.testing.allocator);
+ 
++    if (comptime builtin.link_libc and builtin.target.os.tag != .windows) {
++        syncEnviron();
++    }
+     return state.?.environ.createMap(state.?.alloc);
+ }
 
 
