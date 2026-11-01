@@ -1,12 +1,13 @@
 # Khostty
 
-I like [Ghostty](https://ghostty.org/) and I like KDE Plasma. Unfortunately for me, Ghostty uses GTK for its UI elements on Linux. While this is a reasonable choice, my preference is to have something that feels more consistent on my desktop. 
+I like [Ghostty](https://ghostty.org/) and I like KDE Plasma. Unfortunately for me, Ghostty uses GTK for its UI elements on Linux. While this is a reasonable choice, my preference is to have something that feels more consistent on my desktop. Now that libghostty exists, it's possible to have my cake and eat it too. 
 
 My goals are as follows:
 
-- Bring the things I like about Ghostty to my KDE desktop in a native-feeling way
-- Explore some fun concepts for terminal UI/UX, such as sidescrolling panes and different ideas around sshing
-- Do this in a maintainable way
+- Bring many of the things I like about Ghostty to my KDE desktop in a native-feeling way
+- Create a tool that scales across all my use cases, from the basic every-day terminal to the serious developer environment
+- Explore some fun concepts for terminal UI/UX, such as sidescrolling panes and my bad ideas around sshing
+- Do this in a maintainable way by consuming libghostty as a dependency, rather than forking ghostty directly
 
 <details>
 <summary><b>Prior Art</b></summary>
