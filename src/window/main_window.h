@@ -43,6 +43,9 @@ private slots:
     void showPreferencesDialog();
     void showCommandBar();
     void updateTitle(const QString& title);
+    void syncColorScheme();
+    void handleBell();
+    void handleDesktopNotification(const QString& title, const QString& body);
 
 protected:
     void changeEvent(QEvent* event) override;
@@ -51,7 +54,7 @@ protected:
 private:
     void setupActions();
     void updateTabBarVisibility();
-    WorklaneView* createTab(const QString& title = QString());
+    WorklaneView* createTab(const QString& title = QString(), const QString& initialDir = QString());
 
     QTabBar* m_tabBar = nullptr;
     QStackedWidget* m_stack = nullptr;

@@ -12,11 +12,12 @@ class TerminalSurface : public QOpenGLWidget, protected QOpenGLFunctions {
     Q_OBJECT
 
 public:
-    explicit TerminalSurface(QWidget* parent = nullptr);
+    explicit TerminalSurface(QWidget* parent = nullptr, const QString& workingDirectory = QString());
     ~TerminalSurface() override;
 
     ghostty_surface_t surface() const { return m_surface; }
     QString title() const { return m_title; }
+    QString currentWorkingDirectory() const;
 
     bool handleAction(const ghostty_action_s& action);
     void handleProcessExited(bool exited);
@@ -25,6 +26,10 @@ public:
     void sendText(const QString& text);
     void applyFontConfig();
     void setFontSize(float points);
+
+    void startSearch(const QString& needle);
+    void navigateSearch(bool next);
+    void endSearch();
 
 signals:
     void titleChanged(const QString& title);
@@ -38,6 +43,8 @@ signals:
     void nextTabRequested();
     void previousTabRequested();
     void toggleCommandPaletteRequested();
+    void splitRequested(Qt::Orientation orientation);
+    void searchStatsChanged(int total, int selected);
 
 protected:
     bool event(QEvent* event) override;
@@ -66,6 +73,8 @@ private:
     ghostty_input_mods_e translateModifiers(Qt::KeyboardModifiers qmods) const;
     ghostty_input_mouse_button_e translateMouseButton(Qt::MouseButton btn) const;
     ghostty_input_key_s buildGhosttyKeyEvent(QKeyEvent* event, ghostty_input_action_e action, QByteArray& textStorage) const;
+    void showContextMenu(const QPoint& globalPos);
+    static Qt::CursorShape mapGhosttyMouseShape(ghostty_action_mouse_shape_e shape);
 
     ghostty_surface_t m_surface = nullptr;
 
@@ -80,5 +89,7 @@ private:
     void* m_eglDisplay = nullptr;
     bool m_supportsDmaBuf = true;
     QString m_title;
+    QString m_currentPwd;
+    QString m_hoveredUrl;
     bool m_isComposing = false;
 };

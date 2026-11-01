@@ -5,13 +5,19 @@
 
 #include <KSharedConfig>
 #include <KConfigGroup>
+#include <KLocalizedString>
 #include <QScrollBar>
 #include <QWheelEvent>
 #include <QResizeEvent>
+#include <QKeyEvent>
 #include <QTimer>
+#include <QLineEdit>
+#include <QLabel>
+#include <QToolButton>
+#include <QIcon>
 #include <algorithm>
 
-WorklaneView::WorklaneView(QWidget* parent)
+WorklaneView::WorklaneView(QWidget* parent, const QString& initialDir)
     : QScrollArea(parent)
 {
     setWidgetResizable(false);
@@ -26,8 +32,77 @@ WorklaneView::WorklaneView(QWidget* parent)
 
     setWidget(m_canvas);
 
+    // Build Search Bar overlay
+    m_searchBar = new QWidget(viewport());
+    m_searchBar->setObjectName(QStringLiteral("khostty_search_bar"));
+    m_searchBar->setVisible(false);
+    auto* sbLayout = new QHBoxLayout(m_searchBar);
+    sbLayout->setContentsMargins(6, 4, 6, 4);
+    sbLayout->setSpacing(4);
+
+    m_searchEdit = new QLineEdit(m_searchBar);
+    m_searchEdit->setPlaceholderText(i18n("Search terminal..."));
+    m_searchEdit->setClearButtonEnabled(true);
+    m_searchEdit->setFixedWidth(200);
+    m_searchEdit->installEventFilter(this);
+
+    auto* prevBtn = new QToolButton(m_searchBar);
+    prevBtn->setFocusPolicy(Qt::NoFocus);
+    prevBtn->setIcon(QIcon::fromTheme(QStringLiteral("go-up"), QIcon::fromTheme(QStringLiteral("arrow-up"))));
+    prevBtn->setToolTip(i18n("Previous Match (Shift+Enter)"));
+    prevBtn->setAutoRaise(true);
+
+    auto* nextBtn = new QToolButton(m_searchBar);
+    nextBtn->setFocusPolicy(Qt::NoFocus);
+    nextBtn->setIcon(QIcon::fromTheme(QStringLiteral("go-down"), QIcon::fromTheme(QStringLiteral("arrow-down"))));
+    nextBtn->setToolTip(i18n("Next Match (Enter)"));
+    nextBtn->setAutoRaise(true);
+
+    m_searchCountLabel = new QLabel(m_searchBar);
+    m_searchCountLabel->setStyleSheet(QStringLiteral("color: gray; font-size: 11px;"));
+
+    auto* closeBtn = new QToolButton(m_searchBar);
+    closeBtn->setFocusPolicy(Qt::NoFocus);
+    closeBtn->setIcon(QIcon::fromTheme(QStringLiteral("window-close"), QIcon::fromTheme(QStringLiteral("dialog-close"))));
+    closeBtn->setToolTip(i18n("Close Search (Escape)"));
+    closeBtn->setAutoRaise(true);
+
+    sbLayout->addWidget(m_searchEdit);
+    sbLayout->addWidget(prevBtn);
+    sbLayout->addWidget(nextBtn);
+    sbLayout->addWidget(m_searchCountLabel);
+    sbLayout->addWidget(closeBtn);
+
+    QColor winColor = palette().color(QPalette::Window);
+    QColor midColor = palette().color(QPalette::Mid);
+    m_searchBar->setStyleSheet(QStringLiteral(
+        "QWidget#khostty_search_bar { background-color: %1; border: 1px solid %2; border-radius: 4px; }"
+    ).arg(winColor.name(), midColor.name()));
+
+    connect(m_searchEdit, &QLineEdit::textChanged, this, [this](const QString& text) {
+        if (m_activeSurface) {
+            m_activeSurface->startSearch(text);
+        }
+    });
+    connect(m_searchEdit, &QLineEdit::returnPressed, this, [this]() {
+        if (m_activeSurface) {
+            m_activeSurface->navigateSearch(true);
+        }
+    });
+    connect(nextBtn, &QToolButton::clicked, this, [this]() {
+        if (m_activeSurface) {
+            m_activeSurface->navigateSearch(true);
+        }
+    });
+    connect(prevBtn, &QToolButton::clicked, this, [this]() {
+        if (m_activeSurface) {
+            m_activeSurface->navigateSearch(false);
+        }
+    });
+    connect(closeBtn, &QToolButton::clicked, this, &WorklaneView::hideSearchBar);
+
     // Initial column
-    addColumn();
+    addColumn(initialDir);
 }
 
 WorklaneView::~WorklaneView() = default;
@@ -154,6 +229,12 @@ void WorklaneView::updateCanvasLayout() {
 void WorklaneView::resizeEvent(QResizeEvent* event) {
     QScrollArea::resizeEvent(event);
     updateCanvasLayout();
+    if (m_searchBar && m_searchBar->isVisible()) {
+        m_searchBar->adjustSize();
+        int x = std::max(10, viewport()->width() - m_searchBar->width() - 20);
+        m_searchBar->move(x, 10);
+        m_searchBar->raise();
+    }
 }
 
 void WorklaneView::setupSurface(TerminalSurface* surface) {
@@ -168,6 +249,27 @@ void WorklaneView::setupSurface(TerminalSurface* surface) {
 
     connect(surface, &TerminalSurface::closeRequested, this, [this, surface]() {
         closeSurface(surface);
+    });
+
+    connect(surface, &TerminalSurface::splitRequested, this, [this, surface](Qt::Orientation ori) {
+        if (ori == Qt::Horizontal) {
+            KhosttySplitter* col = findSplitterForSurface(surface);
+            addColumnAfter(col);
+        } else {
+            splitVertical(surface);
+        }
+    });
+
+    connect(surface, &TerminalSurface::searchStatsChanged, this, [this, surface](int total, int selected) {
+        if (surface == m_activeSurface && m_searchCountLabel) {
+            if (total >= 0) m_searchTotal = total;
+            if (selected >= 0) m_searchSelected = selected;
+            if (m_searchTotal <= 0) {
+                m_searchCountLabel->setText(m_searchEdit && m_searchEdit->text().isEmpty() ? QString() : i18n("No matches"));
+            } else {
+                m_searchCountLabel->setText(i18n("%1 of %2", m_searchSelected + 1, m_searchTotal));
+            }
+        }
     });
 
     connect(surface, &TerminalSurface::newSplitRequested, this, [this](ghostty_action_split_direction_e dir) {
@@ -212,21 +314,31 @@ void WorklaneView::setupPane(TerminalPane* pane) {
             closeSurface(pane->surface());
         }
     });
+    connect(pane, &TerminalPane::unzoomRequested, this, &WorklaneView::toggleSplitZoom);
 }
 
-TerminalSurface* WorklaneView::addColumn() {
+TerminalSurface* WorklaneView::addColumn(const QString& initialDir) {
     KhosttySplitter* current = findSplitterForSurface(m_activeSurface);
-    return addColumnAfter(current);
+    return addColumnAfter(current, initialDir);
 }
 
-TerminalSurface* WorklaneView::addColumnAfter(KhosttySplitter* targetCol) {
+TerminalSurface* WorklaneView::addColumnAfter(KhosttySplitter* targetCol, const QString& initialDir) {
     int viewportW = viewport()->width();
     int viewportH = viewport()->height();
 
     auto* colSplitter = new KhosttySplitter(Qt::Vertical, m_canvas);
     colSplitter->setMinimumHeight(std::max(100, viewportH));
 
-    auto* surface = new TerminalSurface(colSplitter);
+    QString dir = initialDir;
+    if (dir.isEmpty()) {
+        KConfigGroup genCfg(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("General"));
+        bool inherit = genCfg.readEntry("NewSplitInheritsPwd", true);
+        if (inherit && m_activeSurface) {
+            dir = m_activeSurface->currentWorkingDirectory();
+        }
+    }
+
+    auto* surface = new TerminalSurface(colSplitter, dir);
     setupSurface(surface);
 
     auto* pane = new TerminalPane(surface, colSplitter);
@@ -263,20 +375,29 @@ TerminalSurface* WorklaneView::splitCurrentVertical() {
     return splitVertical(m_activeSurface);
 }
 
-TerminalSurface* WorklaneView::splitVertical(TerminalSurface* target) {
+TerminalSurface* WorklaneView::splitVertical(TerminalSurface* target, const QString& initialDir) {
     if (!target) {
         target = m_activeSurface;
     }
     if (!target) {
-        return addColumn();
+        return addColumn(initialDir);
     }
 
     KhosttySplitter* splitter = findSplitterForSurface(target);
     if (!splitter) {
-        return addColumn();
+        return addColumn(initialDir);
     }
 
-    auto* surface = new TerminalSurface(splitter);
+    QString dir = initialDir;
+    if (dir.isEmpty()) {
+        KConfigGroup genCfg(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("General"));
+        bool inherit = genCfg.readEntry("NewSplitInheritsPwd", true);
+        if (inherit && target) {
+            dir = target->currentWorkingDirectory();
+        }
+    }
+
+    auto* surface = new TerminalSurface(splitter, dir);
     setupSurface(surface);
 
     auto* pane = new TerminalPane(surface, splitter);
@@ -529,6 +650,9 @@ void WorklaneView::toggleSplitZoom() {
     if (m_isZoomed) {
         for (int i = 0; i < splitter->count(); ++i) {
             splitter->widget(i)->show();
+            if (auto* pane = qobject_cast<TerminalPane*>(splitter->widget(i))) {
+                pane->setZoomed(false);
+            }
         }
         m_isZoomed = false;
     } else {
@@ -538,7 +662,39 @@ void WorklaneView::toggleSplitZoom() {
                 w->hide();
             }
         }
+        currentPane->setZoomed(true);
         m_isZoomed = true;
+    }
+}
+
+void WorklaneView::toggleSearchBar() {
+    if (m_searchBar && m_searchBar->isVisible()) {
+        hideSearchBar();
+    } else {
+        showSearchBar();
+    }
+}
+
+void WorklaneView::showSearchBar() {
+    if (!m_searchBar) return;
+    m_searchBar->adjustSize();
+    int x = std::max(10, viewport()->width() - m_searchBar->width() - 20);
+    m_searchBar->move(x, 10);
+    m_searchBar->show();
+    m_searchBar->raise();
+    m_searchEdit->setFocus();
+    m_searchEdit->selectAll();
+    if (!m_searchEdit->text().isEmpty() && m_activeSurface) {
+        m_activeSurface->startSearch(m_searchEdit->text());
+    }
+}
+
+void WorklaneView::hideSearchBar() {
+    if (!m_searchBar) return;
+    m_searchBar->hide();
+    if (m_activeSurface) {
+        m_activeSurface->endSearch();
+        m_activeSurface->setFocus();
     }
 }
 
@@ -563,6 +719,20 @@ KhosttySplitter* WorklaneView::findSplitterForSurface(TerminalSurface* surface) 
 }
 
 bool WorklaneView::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == m_searchEdit && event->type() == QEvent::KeyPress) {
+        auto* ke = static_cast<QKeyEvent*>(event);
+        if (ke->key() == Qt::Key_Escape) {
+            hideSearchBar();
+            return true;
+        }
+        if (ke->key() == Qt::Key_Return || ke->key() == Qt::Key_Enter) {
+            if (ke->modifiers() & Qt::ShiftModifier) {
+                if (m_activeSurface) m_activeSurface->navigateSearch(false);
+                return true;
+            }
+        }
+    }
+
     if (event->type() == QEvent::FocusIn) {
         auto* surface = qobject_cast<TerminalSurface*>(watched);
         if (surface && surface != m_activeSurface) {

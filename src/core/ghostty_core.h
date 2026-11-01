@@ -26,6 +26,7 @@ public:
     TerminalSurface* findSurface(ghostty_surface_t surface) const;
     QList<TerminalSurface*> allSurfaces() const { return m_surfaces.values(); }
     void reloadConfig();
+    void setColorScheme(bool isDark);
     QString writeRuntimeConfig();
 
 public slots:

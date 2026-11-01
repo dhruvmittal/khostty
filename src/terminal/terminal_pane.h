@@ -21,11 +21,14 @@ public:
     void setTitle(const QString& title);
     void setHeaderVisible(bool visible);
     void setBorderVisible(bool visible);
+    void setZoomed(bool zoomed);
+    bool isZoomed() const { return m_isZoomed; }
 
 signals:
     void splitRightRequested();
     void splitDownRequested();
     void closeRequested();
+    void unzoomRequested();
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -39,10 +42,12 @@ private:
     QWidget* m_header = nullptr;
     QLabel* m_dotIndicator = nullptr;
     QLabel* m_titleLabel = nullptr;
+    QToolButton* m_zoomBadgeBtn = nullptr;
     QToolButton* m_splitRightBtn = nullptr;
     QToolButton* m_splitDownBtn = nullptr;
     QToolButton* m_closeBtn = nullptr;
     QString m_title;
     bool m_isActive = false;
     bool m_borderVisible = true;
+    bool m_isZoomed = false;
 };

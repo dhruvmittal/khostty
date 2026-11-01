@@ -7,6 +7,7 @@
 #include <KStandardAction>
 #include <KCommandBar>
 #include <KLocalizedString>
+#include <KNotification>
 #include <KToolBar>
 #include <KAcceleratorManager>
 #include <KMessageBox>
@@ -109,6 +110,8 @@ MainWindow::MainWindow(QWidget* parent)
         }
     });
 
+    syncColorScheme();
+
     resize(1000, 700);
     setWindowTitle(QStringLiteral("Khostty"));
 }
@@ -125,8 +128,8 @@ void MainWindow::updateTabBarVisibility() {
     }
 }
 
-WorklaneView* MainWindow::createTab(const QString& title) {
-    auto* worklane = new WorklaneView(m_stack);
+WorklaneView* MainWindow::createTab(const QString& title, const QString& initialDir) {
+    auto* worklane = new WorklaneView(m_stack, initialDir);
 
     QString tabTitle = title.isEmpty() ? i18n("Terminal") : title;
     int idx = m_stack->addWidget(worklane);
@@ -160,6 +163,8 @@ WorklaneView* MainWindow::createTab(const QString& title) {
         connect(surface, &TerminalSurface::nextTabRequested, this, &MainWindow::nextTab, Qt::UniqueConnection);
         connect(surface, &TerminalSurface::previousTabRequested, this, &MainWindow::prevTab, Qt::UniqueConnection);
         connect(surface, &TerminalSurface::toggleCommandPaletteRequested, this, &MainWindow::showCommandBar, Qt::UniqueConnection);
+        connect(surface, &TerminalSurface::bell, this, &MainWindow::handleBell, Qt::UniqueConnection);
+        connect(surface, &TerminalSurface::desktopNotification, this, &MainWindow::handleDesktopNotification, Qt::UniqueConnection);
     };
 
     connect(worklane, &WorklaneView::activeSurfaceChanged, this, wireSurface);
@@ -372,7 +377,16 @@ void MainWindow::newWindow() {
 }
 
 void MainWindow::newTab() {
-    createTab();
+    QString initialDir;
+    KConfigGroup genCfg(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("General"));
+    bool inherit = genCfg.readEntry("NewTabInheritsPwd", false);
+    if (inherit) {
+        auto* curWl = currentWorklane();
+        if (curWl && curWl->activeSurface()) {
+            initialDir = curWl->activeSurface()->currentWorkingDirectory();
+        }
+    }
+    createTab(QString(), initialDir);
 }
 
 void MainWindow::closeCurrentTab() {
@@ -466,9 +480,8 @@ void MainWindow::closeActive() {
 }
 
 void MainWindow::findText() {
-    TerminalSurface* surface = activeSurface();
-    if (surface && surface->surface()) {
-        ghostty_surface_binding_action(surface->surface(), "start_search", 12);
+    if (auto* wl = currentWorklane()) {
+        wl->toggleSearchBar();
     }
 }
 
@@ -553,6 +566,32 @@ void MainWindow::showPreferencesDialog() {
     appearanceLayout->addWidget(hideSingleHeaderCheck);
 
     layout->addWidget(appearanceGroup);
+
+    // Working Directory (CWD) Settings
+    auto* cwdGroup = new QGroupBox(i18n("Working Directory"), &dialog);
+    auto* cwdLayout = new QVBoxLayout(cwdGroup);
+
+    KConfigGroup genCfg(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("General"));
+    bool newTabInherit = genCfg.readEntry("NewTabInheritsPwd", false);
+    bool newSplitInherit = genCfg.readEntry("NewSplitInheritsPwd", true);
+
+    auto* newTabInheritCheck = new QCheckBox(
+        i18n("New tabs inherit working directory from active terminal"),
+        cwdGroup
+    );
+    newTabInheritCheck->setChecked(newTabInherit);
+    newTabInheritCheck->setToolTip(i18n("When unchecked, new tabs start in your home directory ($HOME)."));
+    cwdLayout->addWidget(newTabInheritCheck);
+
+    auto* newSplitInheritCheck = new QCheckBox(
+        i18n("New splits inherit working directory from active terminal"),
+        cwdGroup
+    );
+    newSplitInheritCheck->setChecked(newSplitInherit);
+    newSplitInheritCheck->setToolTip(i18n("When unchecked, new splits start in your home directory ($HOME)."));
+    cwdLayout->addWidget(newSplitInheritCheck);
+
+    layout->addWidget(cwdGroup);
 
     // Font Settings
     auto* fontGroup = new QGroupBox(i18n("Font Settings"), &dialog);
@@ -643,6 +682,11 @@ void MainWindow::showPreferencesDialog() {
     layout->addWidget(buttonBox);
 
     auto applyChanges = [=, this]() {
+        KConfigGroup genGroup(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("General"));
+        genGroup.writeEntry("NewTabInheritsPwd", newTabInheritCheck->isChecked());
+        genGroup.writeEntry("NewSplitInheritsPwd", newSplitInheritCheck->isChecked());
+        genGroup.sync();
+
         KConfigGroup appGroup(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("Appearance"));
         appGroup.writeEntry("ShowHeaderOnlyOnSplit", hideSingleHeaderCheck->isChecked());
         appGroup.sync();
@@ -705,6 +749,9 @@ void MainWindow::updateTitle(const QString& title) {
 
 void MainWindow::changeEvent(QEvent* event) {
     KXmlGuiWindow::changeEvent(event);
+    if (event->type() == QEvent::ApplicationPaletteChange || event->type() == QEvent::PaletteChange) {
+        syncColorScheme();
+    }
     if (event->type() == QEvent::ActivationChange && isActiveWindow()) {
         ghostty_app_set_focus(GhosttyCore::instance().app(), true);
         auto* wl = currentWorklane();
@@ -720,4 +767,22 @@ void MainWindow::showEvent(QShowEvent* event) {
     if (wl && wl->activeSurface()) {
         wl->activeSurface()->setFocus();
     }
+}
+
+void MainWindow::syncColorScheme() {
+    bool isDark = (qApp->palette().color(QPalette::Window).lightness() < 128);
+    GhosttyCore::instance().setColorScheme(isDark);
+    for (auto* surface : GhosttyCore::instance().allSurfaces()) {
+        if (surface) {
+            surface->update();
+        }
+    }
+}
+
+void MainWindow::handleBell() {
+    KNotification::event(QStringLiteral("bell"), i18n("Bell"), QString(), QStringLiteral("utilities-terminal"));
+}
+
+void MainWindow::handleDesktopNotification(const QString& title, const QString& body) {
+    KNotification::event(QStringLiteral("command_finished"), title, body, QStringLiteral("utilities-terminal"));
 }

@@ -9,12 +9,14 @@
 
 class TerminalSurface;
 class TerminalPane;
+class QLineEdit;
+class QLabel;
 
 class WorklaneView : public QScrollArea {
     Q_OBJECT
 
 public:
-    explicit WorklaneView(QWidget* parent = nullptr);
+    explicit WorklaneView(QWidget* parent = nullptr, const QString& initialDir = QString());
     ~WorklaneView() override;
 
     TerminalSurface* activeSurface() const;
@@ -22,9 +24,9 @@ public:
     QString activeTitle() const { return m_activeTitle; }
     bool hasAnySplit() const;
 
-    TerminalSurface* addColumn();
-    TerminalSurface* addColumnAfter(KhosttySplitter* targetCol = nullptr);
-    TerminalSurface* splitVertical(TerminalSurface* target = nullptr);
+    TerminalSurface* addColumn(const QString& initialDir = QString());
+    TerminalSurface* addColumnAfter(KhosttySplitter* targetCol = nullptr, const QString& initialDir = QString());
+    TerminalSurface* splitVertical(TerminalSurface* target = nullptr, const QString& initialDir = QString());
     TerminalSurface* splitCurrentVertical();
     void closeActiveSurface();
     void closeSurface(TerminalSurface* surface);
@@ -35,6 +37,10 @@ public:
     void focusDownSplit();
     void equalizeSplits();
     void toggleSplitZoom();
+
+    void toggleSearchBar();
+    void showSearchBar();
+    void hideSearchBar();
 
     void rebuildCanvasLayout();
     void updateCanvasLayout();
@@ -65,4 +71,11 @@ private:
     TerminalSurface* m_activeSurface = nullptr;
     QString m_activeTitle;
     bool m_isZoomed = false;
+
+    // Search bar overlay
+    QWidget* m_searchBar = nullptr;
+    QLineEdit* m_searchEdit = nullptr;
+    QLabel* m_searchCountLabel = nullptr;
+    int m_searchTotal = 0;
+    int m_searchSelected = 0;
 };

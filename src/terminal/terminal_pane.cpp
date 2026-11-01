@@ -38,6 +38,16 @@ TerminalPane::TerminalPane(TerminalSurface* surface, QWidget* parent)
     m_titleLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 
     // Actions on header
+    m_zoomBadgeBtn = new QToolButton(m_header);
+    m_zoomBadgeBtn->setFocusPolicy(Qt::NoFocus);
+    m_zoomBadgeBtn->setIcon(QIcon::fromTheme(QStringLiteral("zoom-fit-best"), QIcon::fromTheme(QStringLiteral("view-fullscreen"))));
+    m_zoomBadgeBtn->setText(i18n("Zoomed"));
+    m_zoomBadgeBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    m_zoomBadgeBtn->setToolTip(i18n("Split is zoomed. Click to unzoom."));
+    m_zoomBadgeBtn->setAutoRaise(true);
+    m_zoomBadgeBtn->setVisible(false);
+    connect(m_zoomBadgeBtn, &QToolButton::clicked, this, &TerminalPane::unzoomRequested);
+
     m_splitRightBtn = new QToolButton(m_header);
     m_splitRightBtn->setFocusPolicy(Qt::NoFocus);
     m_splitRightBtn->setIcon(QIcon::fromTheme(QStringLiteral("view-split-left-right"), QIcon::fromTheme(QStringLiteral("list-add"))));
@@ -70,6 +80,7 @@ TerminalPane::TerminalPane(TerminalSurface* surface, QWidget* parent)
 
     headerLayout->addWidget(m_dotIndicator);
     headerLayout->addWidget(m_titleLabel);
+    headerLayout->addWidget(m_zoomBadgeBtn);
     headerLayout->addWidget(m_splitRightBtn);
     headerLayout->addWidget(m_splitDownBtn);
     headerLayout->addWidget(m_closeBtn);
@@ -121,6 +132,14 @@ void TerminalPane::updateHeaderStyle() {
         m_titleLabel->setStyleSheet(QStringLiteral("color: %1; font-size: 11px;").arg(textMuted.name()));
         m_header->setStyleSheet(QStringLiteral("background-color: %1; border-bottom: 1px solid %2;")
             .arg(windowColor.name(), windowColor.darker(115).name()));
+    }
+}
+
+void TerminalPane::setZoomed(bool zoomed) {
+    if (m_isZoomed == zoomed) return;
+    m_isZoomed = zoomed;
+    if (m_zoomBadgeBtn) {
+        m_zoomBadgeBtn->setVisible(zoomed);
     }
 }
 

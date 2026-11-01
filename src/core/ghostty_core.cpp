@@ -336,3 +336,12 @@ void GhosttyCore::reloadConfig() {
     ghostty_app_update_config(m_app, cfg);
     ghostty_config_free(cfg);
 }
+
+void GhosttyCore::setColorScheme(bool isDark) {
+    if (m_app) {
+        ghostty_app_set_color_scheme(
+            m_app,
+            isDark ? GHOSTTY_COLOR_SCHEME_DARK : GHOSTTY_COLOR_SCHEME_LIGHT
+        );
+    }
+}

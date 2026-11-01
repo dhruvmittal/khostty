@@ -9,8 +9,16 @@
 #include <QOpenGLContext>
 #include <QFontDatabase>
 #include <QDebug>
+#include <QMenu>
+#include <QAction>
+#include <QDesktopServices>
+#include <QUrl>
+#include <QFileInfo>
+#include <QDir>
+#include <QClipboard>
 #include <KSharedConfig>
 #include <KConfigGroup>
+#include <KLocalizedString>
 
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
@@ -37,7 +45,7 @@ static PFNEGLCREATEIMAGEKHRPROC s_eglCreateImageKHR = nullptr;
 static PFNEGLDESTROYIMAGEKHRPROC s_eglDestroyImageKHR = nullptr;
 static PFNGLEGLIMAGETARGETTEXTURE2DOESPROC s_glEGLImageTargetTexture2DOES = nullptr;
 
-TerminalSurface::TerminalSurface(QWidget* parent)
+TerminalSurface::TerminalSurface(QWidget* parent, const QString& workingDirectory)
     : QOpenGLWidget(parent)
 {
     setFocusPolicy(Qt::StrongFocus);
@@ -56,6 +64,12 @@ TerminalSurface::TerminalSurface(QWidget* parent)
     config.platform.linux_platform.egl_display = nullptr;
     config.scale_factor = devicePixelRatioF();
     config.userdata = this;
+
+    QByteArray wdUtf8 = workingDirectory.toUtf8();
+    if (!wdUtf8.isEmpty()) {
+        config.working_directory = wdUtf8.constData();
+        m_currentPwd = workingDirectory;
+    }
 
     // Dedicated Khostty font configuration from khosttyrc
     KConfigGroup fontGroup(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("Font"));
@@ -464,6 +478,16 @@ void TerminalSurface::keyReleaseEvent(QKeyEvent* event) {
 
 void TerminalSurface::mousePressEvent(QMouseEvent* event) {
     if (!m_surface) return;
+
+    if (event->button() == Qt::RightButton) {
+        bool mouseCaptured = ghostty_surface_mouse_captured(m_surface);
+        if (!mouseCaptured || (event->modifiers() & Qt::ShiftModifier)) {
+            showContextMenu(event->globalPosition().toPoint());
+            event->accept();
+            return;
+        }
+    }
+
     ghostty_surface_mouse_button(
         m_surface,
         GHOSTTY_MOUSE_PRESS,
@@ -576,6 +600,26 @@ void TerminalSurface::sendText(const QString& text) {
     ghostty_surface_text(m_surface, utf8.constData(), static_cast<uintptr_t>(utf8.size()));
 }
 
+QString TerminalSurface::currentWorkingDirectory() const {
+    if (m_surface) {
+        uint64_t pid = ghostty_surface_foreground_pid(m_surface);
+        if (pid > 0) {
+            QString procCwd = QStringLiteral("/proc/%1/cwd").arg(pid);
+            QFileInfo fi(procCwd);
+            if (fi.exists()) {
+                QString canonical = fi.canonicalFilePath();
+                if (!canonical.isEmpty() && QDir(canonical).exists()) {
+                    return canonical;
+                }
+            }
+        }
+    }
+    if (!m_currentPwd.isEmpty() && QDir(m_currentPwd).exists()) {
+        return m_currentPwd;
+    }
+    return QDir::homePath();
+}
+
 bool TerminalSurface::handleAction(const ghostty_action_s& action) {
     switch (action.tag) {
         case GHOSTTY_ACTION_RENDER:
@@ -593,7 +637,48 @@ bool TerminalSurface::handleAction(const ghostty_action_s& action) {
         case GHOSTTY_ACTION_PWD:
             if (action.action.pwd.pwd) {
                 QString pwd = QString::fromUtf8(action.action.pwd.pwd);
+                m_currentPwd = pwd;
                 emit pwdChanged(pwd);
+            }
+            return true;
+
+        case GHOSTTY_ACTION_OPEN_URL:
+            if (action.action.open_url.url) {
+                QString urlStr = QString::fromUtf8(action.action.open_url.url);
+                QDesktopServices::openUrl(QUrl::fromUserInput(urlStr));
+            }
+            return true;
+
+        case GHOSTTY_ACTION_MOUSE_SHAPE:
+            setCursor(mapGhosttyMouseShape(action.action.mouse_shape));
+            return true;
+
+        case GHOSTTY_ACTION_MOUSE_OVER_LINK:
+            if (action.action.mouse_over_link.url && action.action.mouse_over_link.len > 0) {
+                m_hoveredUrl = QString::fromUtf8(action.action.mouse_over_link.url, action.action.mouse_over_link.len);
+                setCursor(Qt::PointingHandCursor);
+            } else {
+                m_hoveredUrl.clear();
+                setCursor(Qt::IBeamCursor);
+            }
+            return true;
+
+        case GHOSTTY_ACTION_SEARCH_TOTAL:
+            emit searchStatsChanged(static_cast<int>(action.action.search_total.total), -1);
+            return true;
+
+        case GHOSTTY_ACTION_SEARCH_SELECTED:
+            emit searchStatsChanged(-1, static_cast<int>(action.action.search_selected.selected));
+            return true;
+
+        case GHOSTTY_ACTION_COMMAND_FINISHED:
+            if (action.action.command_finished.duration > 5000000000ULL) {
+                emit desktopNotification(
+                    i18n("Command finished"),
+                    action.action.command_finished.exit_code == 0
+                        ? i18n("Command completed successfully")
+                        : i18n("Command exited with code %1", action.action.command_finished.exit_code)
+                );
             }
             return true;
 
@@ -644,6 +729,116 @@ bool TerminalSurface::handleAction(const ghostty_action_s& action) {
             break;
     }
     return false;
+}
+
+void TerminalSurface::showContextMenu(const QPoint& globalPos) {
+    QMenu menu(this);
+
+    QAction* copyAction = menu.addAction(QIcon::fromTheme(QStringLiteral("edit-copy")), i18n("&Copy"));
+    bool hasSelection = m_surface && ghostty_surface_has_selection(m_surface);
+    copyAction->setEnabled(hasSelection);
+    connect(copyAction, &QAction::triggered, this, [this]() {
+        if (m_surface) {
+            ghostty_surface_binding_action(m_surface, "copy_to_clipboard", 17);
+        }
+    });
+
+    QAction* pasteAction = menu.addAction(QIcon::fromTheme(QStringLiteral("edit-paste")), i18n("&Paste"));
+    connect(pasteAction, &QAction::triggered, this, [this]() {
+        if (m_surface) {
+            ghostty_surface_binding_action(m_surface, "paste_from_clipboard", 21);
+        }
+    });
+
+    if (!m_hoveredUrl.isEmpty()) {
+        menu.addSeparator();
+        QAction* openLinkAction = menu.addAction(QIcon::fromTheme(QStringLiteral("internet-services")), i18n("Open Link"));
+        connect(openLinkAction, &QAction::triggered, this, [this]() {
+            QDesktopServices::openUrl(QUrl::fromUserInput(m_hoveredUrl));
+        });
+
+        QAction* copyLinkAction = menu.addAction(QIcon::fromTheme(QStringLiteral("edit-copy")), i18n("Copy Link Address"));
+        connect(copyLinkAction, &QAction::triggered, this, [this]() {
+            QGuiApplication::clipboard()->setText(m_hoveredUrl);
+        });
+    }
+
+    menu.addSeparator();
+    QAction* splitRight = menu.addAction(QIcon::fromTheme(QStringLiteral("view-split-left-right")), i18n("Split &Right"));
+    connect(splitRight, &QAction::triggered, this, [this]() {
+        emit splitRequested(Qt::Horizontal);
+    });
+
+    QAction* splitDown = menu.addAction(QIcon::fromTheme(QStringLiteral("view-split-top-bottom")), i18n("Split &Down"));
+    connect(splitDown, &QAction::triggered, this, [this]() {
+        emit splitRequested(Qt::Vertical);
+    });
+
+    menu.addSeparator();
+    QAction* closeAction = menu.addAction(QIcon::fromTheme(QStringLiteral("window-close")), i18n("&Close"));
+    connect(closeAction, &QAction::triggered, this, &TerminalSurface::closeRequested);
+
+    menu.exec(globalPos);
+}
+
+Qt::CursorShape TerminalSurface::mapGhosttyMouseShape(ghostty_action_mouse_shape_e shape) {
+    switch (shape) {
+        case GHOSTTY_MOUSE_SHAPE_DEFAULT:
+        case GHOSTTY_MOUSE_SHAPE_CELL:
+            return Qt::IBeamCursor;
+        case GHOSTTY_MOUSE_SHAPE_POINTER:
+        case GHOSTTY_MOUSE_SHAPE_ALIAS:
+            return Qt::PointingHandCursor;
+        case GHOSTTY_MOUSE_SHAPE_TEXT:
+        case GHOSTTY_MOUSE_SHAPE_VERTICAL_TEXT:
+            return Qt::IBeamCursor;
+        case GHOSTTY_MOUSE_SHAPE_CROSSHAIR:
+            return Qt::CrossCursor;
+        case GHOSTTY_MOUSE_SHAPE_WAIT:
+            return Qt::WaitCursor;
+        case GHOSTTY_MOUSE_SHAPE_PROGRESS:
+            return Qt::BusyCursor;
+        case GHOSTTY_MOUSE_SHAPE_NOT_ALLOWED:
+        case GHOSTTY_MOUSE_SHAPE_NO_DROP:
+            return Qt::ForbiddenCursor;
+        case GHOSTTY_MOUSE_SHAPE_COL_RESIZE:
+        case GHOSTTY_MOUSE_SHAPE_EW_RESIZE:
+        case GHOSTTY_MOUSE_SHAPE_E_RESIZE:
+        case GHOSTTY_MOUSE_SHAPE_W_RESIZE:
+            return Qt::SplitHCursor;
+        case GHOSTTY_MOUSE_SHAPE_ROW_RESIZE:
+        case GHOSTTY_MOUSE_SHAPE_NS_RESIZE:
+        case GHOSTTY_MOUSE_SHAPE_N_RESIZE:
+        case GHOSTTY_MOUSE_SHAPE_S_RESIZE:
+            return Qt::SplitVCursor;
+        case GHOSTTY_MOUSE_SHAPE_MOVE:
+        case GHOSTTY_MOUSE_SHAPE_ALL_SCROLL:
+            return Qt::SizeAllCursor;
+        case GHOSTTY_MOUSE_SHAPE_GRAB:
+            return Qt::OpenHandCursor;
+        case GHOSTTY_MOUSE_SHAPE_GRABBING:
+            return Qt::ClosedHandCursor;
+        default:
+            return Qt::ArrowCursor;
+    }
+}
+
+void TerminalSurface::startSearch(const QString& needle) {
+    if (!m_surface) return;
+    QByteArray actionStr = QStringLiteral("search:%1").arg(needle).toUtf8();
+    ghostty_surface_binding_action(m_surface, actionStr.constData(), static_cast<uintptr_t>(actionStr.size()));
+}
+
+void TerminalSurface::navigateSearch(bool next) {
+    if (!m_surface) return;
+    const char* actionStr = next ? "navigate_search:next" : "navigate_search:previous";
+    ghostty_surface_binding_action(m_surface, actionStr, static_cast<uintptr_t>(strlen(actionStr)));
+}
+
+void TerminalSurface::endSearch() {
+    if (!m_surface) return;
+    const char* actionStr = "end_search";
+    ghostty_surface_binding_action(m_surface, actionStr, static_cast<uintptr_t>(strlen(actionStr)));
 }
 
 void TerminalSurface::handleProcessExited(bool exited) {
