@@ -31,6 +31,7 @@
 #include <QDoubleSpinBox>
 #include <QPushButton>
 #include <QFontDatabase>
+#include <KColorButton>
 #include <KSharedConfig>
 #include <KConfigGroup>
 #include <KXMLGUIFactory>
@@ -706,6 +707,26 @@ void MainWindow::showPreferencesDialog() {
     showScrollbarCheck->setChecked(showWorklaneScrollbar);
     appearanceLayout->addWidget(showScrollbarCheck);
 
+    // Sidebar Accent Color Override
+    QString customAccentStr = appCfg.readEntry("CustomAccentColor", QString());
+    bool useCustomAccent = !customAccentStr.isEmpty();
+    QColor initialAccent = useCustomAccent ? QColor(customAccentStr) : (m_sidebar ? m_sidebar->accentColor() : palette().color(QPalette::Highlight));
+
+    auto* accentLayout = new QHBoxLayout();
+    auto* customAccentCheck = new QCheckBox(i18n("Override sidebar accent color:"), appearanceGroup);
+    customAccentCheck->setChecked(useCustomAccent);
+
+    auto* colorBtn = new KColorButton(initialAccent, appearanceGroup);
+    colorBtn->setEnabled(useCustomAccent);
+    colorBtn->setDefaultColor(m_sidebar ? m_sidebar->accentColor() : palette().color(QPalette::Highlight));
+
+    connect(customAccentCheck, &QCheckBox::toggled, colorBtn, &QWidget::setEnabled);
+
+    accentLayout->addWidget(customAccentCheck);
+    accentLayout->addWidget(colorBtn);
+    accentLayout->addStretch();
+    appearanceLayout->addLayout(accentLayout);
+
     layout->addWidget(appearanceGroup);
 
     // Working Directory (CWD) Settings
@@ -831,7 +852,16 @@ void MainWindow::showPreferencesDialog() {
         KConfigGroup appGroup(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("Appearance"));
         appGroup.writeEntry("ShowHeaderOnlyOnSplit", hideSingleHeaderCheck->isChecked());
         appGroup.writeEntry("ShowWorklaneScrollbar", showScrollbarCheck->isChecked());
+        if (customAccentCheck->isChecked()) {
+            appGroup.writeEntry("CustomAccentColor", colorBtn->color().name());
+        } else {
+            appGroup.deleteEntry("CustomAccentColor");
+        }
         appGroup.sync();
+
+        if (m_sidebar) {
+            m_sidebar->updateAccentColor();
+        }
 
         KConfigGroup fontGroup(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("Font"));
         fontGroup.writeEntry("UseSystemFixedFont", useSysCheck->isChecked());

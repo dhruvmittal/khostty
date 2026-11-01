@@ -19,12 +19,18 @@
 #include <KLocalizedString>
 #include <KAcceleratorManager>
 #include <KColorScheme>
+#include <KSharedConfig>
+#include <KConfigGroup>
+#include <algorithm>
 
 Q_DECLARE_METATYPE(QPointer<TerminalSurface>)
 
 class WorklaneItemDelegate : public QStyledItemDelegate {
 public:
-    using QStyledItemDelegate::QStyledItemDelegate;
+    explicit WorklaneItemDelegate(WorklaneSidebar* sidebar, QObject* parent = nullptr)
+        : QStyledItemDelegate(parent)
+        , m_sidebar(sidebar)
+    {}
 
     QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const override {
         int itemType = index.data(Qt::UserRole).toInt();
@@ -53,8 +59,24 @@ public:
             int paneCount = index.data(Qt::UserRole + 1).toInt();
             bool isCurrentTab = index.data(Qt::UserRole + 2).toBool();
 
-            // 12px top offset gives distinct visual breathing room between tab groups
             QRect headerRect = rect.adjusted(10, 8, -10, 0);
+
+            QColor vibrantAccent = m_sidebar ? m_sidebar->vibrantAccentColor() : option.palette.color(QPalette::Highlight);
+
+            int badgeWidth = option.fontMetrics.horizontalAdvance(i18n("%1 panes", paneCount)) + 16;
+
+            int leftOffset = 0;
+            if (isCurrentTab) {
+                // Vibrant vertical accent indicator pill on the left of active tab
+                int pillH = std::max(12, option.fontMetrics.height() - 2);
+                QRect accentPill(headerRect.left(), headerRect.top() + (headerRect.height() - pillH) / 2, 3, pillH);
+                painter->setPen(Qt::NoPen);
+                painter->setBrush(vibrantAccent);
+                painter->drawRoundedRect(accentPill, 1.5, 1.5);
+                leftOffset = 8;
+            }
+
+            QRect textRect = headerRect.adjusted(leftOffset, 0, -badgeWidth - 4, 0);
 
             // Title text (unboxed, clean typography)
             QFont font = option.font;
@@ -62,12 +84,9 @@ public:
             font.setPointSize(std::max(8, font.pointSize() - 1));
             painter->setFont(font);
 
-            QColor textColor = isCurrentTab ? option.palette.color(QPalette::Highlight)
+            QColor textColor = isCurrentTab ? vibrantAccent
                                             : viewScheme.foreground(KColorScheme::InactiveText).color();
             painter->setPen(textColor);
-
-            int badgeWidth = option.fontMetrics.horizontalAdvance(i18n("%1 panes", paneCount)) + 16;
-            QRect textRect = headerRect.adjusted(0, 0, -badgeWidth - 4, 0);
 
             QString elidedTabName = option.fontMetrics.elidedText(tabName.toUpper(), Qt::ElideRight, textRect.width());
             painter->drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft, elidedTabName);
@@ -83,16 +102,25 @@ public:
             int pillH = std::max(15, painter->fontMetrics().height() + 2);
             QRect pillRect(headerRect.right() - pillW, headerRect.top() + (headerRect.height() - pillH) / 2, pillW, pillH);
 
-            QColor pillBg = isCurrentTab ? option.palette.color(QPalette::Highlight)
-                                        : option.palette.color(QPalette::Mid);
-            pillBg.setAlpha(isCurrentTab ? 35 : 40);
-            painter->setPen(Qt::NoPen);
-            painter->setBrush(pillBg);
-            painter->drawRoundedRect(pillRect, 3, 3);
+            if (isCurrentTab) {
+                QColor pillBg = vibrantAccent;
+                pillBg.setAlpha(40);
+                painter->setPen(QPen(vibrantAccent, 1));
+                painter->setBrush(pillBg);
+                painter->drawRoundedRect(pillRect, 3, 3);
 
-            painter->setPen(isCurrentTab ? option.palette.color(QPalette::Highlight)
-                                         : viewScheme.foreground(KColorScheme::InactiveText).color());
-            painter->drawText(pillRect, Qt::AlignCenter, badge);
+                painter->setPen(vibrantAccent);
+                painter->drawText(pillRect, Qt::AlignCenter, badge);
+            } else {
+                QColor pillBg = option.palette.color(QPalette::Mid);
+                pillBg.setAlpha(40);
+                painter->setPen(Qt::NoPen);
+                painter->setBrush(pillBg);
+                painter->drawRoundedRect(pillRect, 3, 3);
+
+                painter->setPen(viewScheme.foreground(KColorScheme::InactiveText).color());
+                painter->drawText(pillRect, Qt::AlignCenter, badge);
+            }
 
         } else if (itemType == 2) {
             // Lane Card
@@ -104,24 +132,31 @@ public:
 
             QRect cardRect = rect.adjusted(8, 2, -8, -2);
 
+            QColor vibrantAccent = m_sidebar ? m_sidebar->accentColor() : option.palette.color(QPalette::Highlight);
+
             QColor cardBg = option.palette.color(QPalette::Window);
             QColor borderCol = option.palette.color(QPalette::Mid);
 
             if (isActive) {
-                // Active pane gets elevated background with crisp contrast
-                cardBg = option.palette.color(QPalette::Highlight);
-                borderCol = option.palette.color(QPalette::Highlight);
+                // Active pane gets elevated background with crisp contrast using accent color
+                cardBg = vibrantAccent;
+                borderCol = vibrantAccent;
             } else if (hasAlert) {
                 cardBg = QColor(235, 160, 20, 35);
                 borderCol = QColor(235, 160, 20, 200);
             } else if (option.state & QStyle::State_MouseOver) {
                 cardBg = option.palette.color(QPalette::AlternateBase);
-                borderCol = option.palette.color(QPalette::Highlight).lighter(120);
+                borderCol = vibrantAccent.lighter(120);
             }
 
             painter->setPen(QPen(borderCol, 1));
             painter->setBrush(cardBg);
             painter->drawRoundedRect(cardRect, 5, 5);
+
+            // Determine readable foreground color on active card background
+            bool lightActiveCard = (cardBg.lightnessF() > 0.60);
+            QColor activeFg = lightActiveCard ? Qt::black : option.palette.color(QPalette::HighlightedText);
+            QColor activePwdCol = lightActiveCard ? QColor(0, 0, 0, 190) : QColor(255, 255, 255, 220);
 
             // Status Indicator Dot
             int dotR = 3;
@@ -131,7 +166,7 @@ public:
             if (hasAlert) {
                 painter->setBrush(QColor(235, 160, 20)); // Amber alert
             } else if (isActive) {
-                painter->setBrush(option.palette.color(QPalette::HighlightedText));
+                painter->setBrush(activeFg);
             } else {
                 painter->setBrush(viewScheme.foreground(KColorScheme::InactiveText).color());
             }
@@ -152,35 +187,34 @@ public:
                 int tagPillH = std::max(15, tagFm.height() + 2);
 
                 QRect tagPillRect(cardRect.right() - tagPillWidth - 6, cardRect.top() + 5, tagPillWidth, tagPillH);
-                QColor tagBg = isActive ? option.palette.color(QPalette::Highlight).darker(115)
+                QColor tagBg = isActive ? (lightActiveCard ? vibrantAccent.lighter(115) : vibrantAccent.darker(115))
                                         : option.palette.color(QPalette::AlternateBase);
-                painter->setPen(QPen(isActive ? option.palette.color(QPalette::HighlightedText) : option.palette.color(QPalette::Mid), 1));
+                painter->setPen(QPen(isActive ? activeFg : option.palette.color(QPalette::Mid), 1));
                 painter->setBrush(tagBg);
                 painter->drawRoundedRect(tagPillRect, 3, 3);
 
                 painter->setFont(tagFont);
-                painter->setPen(isActive ? option.palette.color(QPalette::HighlightedText)
+                painter->setPen(isActive ? activeFg
                                          : viewScheme.foreground(KColorScheme::NormalText).color());
                 painter->drawText(tagPillRect, Qt::AlignCenter, colTag);
             }
 
-            // Line 1: Title (High contrast: HighlightedText when active, NormalText when inactive)
+            // Line 1: Title (High contrast: activeFg when active, NormalText when inactive)
             int lineH = std::max(15, option.fontMetrics.height());
             QRect titleRect(leftContentX, cardRect.top() + 4, cardRect.width() - (leftContentX - cardRect.left()) - tagPillWidth - 8, lineH);
             QFont titleFont = option.font;
             titleFont.setBold(isActive);
             painter->setFont(titleFont);
-            painter->setPen(isActive ? option.palette.color(QPalette::HighlightedText)
+            painter->setPen(isActive ? activeFg
                                      : viewScheme.foreground(KColorScheme::NormalText).color());
             QString elidedTitle = option.fontMetrics.elidedText(title, Qt::ElideRight, titleRect.width());
             painter->drawText(titleRect, Qt::AlignVCenter | Qt::AlignLeft, elidedTitle);
 
-            // Line 2: PWD in System Monospace Font (High contrast: crisp white when active, InactiveText when inactive)
+            // Line 2: PWD in System Monospace Font (High contrast: activePwdCol when active, InactiveText when inactive)
             QRect pwdRect(leftContentX, cardRect.top() + lineH + 4, cardRect.width() - (leftContentX - cardRect.left()) - 6, lineH);
             painter->setFont(monoFont);
-            QColor pwdCol = isActive ? QColor(255, 255, 255, 215)
-                                     : viewScheme.foreground(KColorScheme::InactiveText).color();
-            painter->setPen(pwdCol);
+            painter->setPen(isActive ? activePwdCol
+                                     : viewScheme.foreground(KColorScheme::InactiveText).color());
             QFontMetrics monoFm(monoFont);
             QString elidedPwd = monoFm.elidedText(pwd, Qt::ElideRight, pwdRect.width());
             painter->drawText(pwdRect, Qt::AlignVCenter | Qt::AlignLeft, elidedPwd);
@@ -191,6 +225,9 @@ public:
 
         painter->restore();
     }
+
+private:
+    WorklaneSidebar* m_sidebar = nullptr;
 };
 
 WorklaneSidebar::WorklaneSidebar(MainWindow* mainWindow, QWidget* parent)
@@ -239,7 +276,7 @@ WorklaneSidebar::WorklaneSidebar(MainWindow* mainWindow, QWidget* parent)
     m_tree->setIndentation(0);
     m_tree->setAnimated(true);
     m_tree->setFocusPolicy(Qt::NoFocus);
-    m_tree->setItemDelegate(new WorklaneItemDelegate(m_tree));
+    m_tree->setItemDelegate(new WorklaneItemDelegate(this, m_tree));
     m_tree->setStyleSheet(QStringLiteral(
         "QTreeWidget { border: none; background: transparent; padding: 4px; }"
         "QTreeWidget::item { padding: 0px; margin: 0px; }"
@@ -306,6 +343,69 @@ void WorklaneSidebar::clearAlert(TerminalSurface* surface) {
         m_alertSurfaces.removeAll(surface);
         scheduleRefresh();
     }
+}
+
+QColor WorklaneSidebar::accentColor() const {
+    KConfigGroup appCfg(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("Appearance"));
+    QString customHex = appCfg.readEntry("CustomAccentColor", QString());
+    if (!customHex.isEmpty()) {
+        QColor customCol(customHex);
+        if (customCol.isValid()) {
+            return customCol;
+        }
+    }
+
+    // Try QPalette::Accent (Qt 6.6+ native accent support)
+    QColor col = palette().color(QPalette::Accent);
+    if (!col.isValid() || col == palette().color(QPalette::Window)) {
+        // Fallback to KDE FocusColor decoration
+        KColorScheme viewScheme(QPalette::Active, KColorScheme::View);
+        col = viewScheme.decoration(KColorScheme::FocusColor).color();
+    }
+    if (!col.isValid() || col == palette().color(QPalette::Window)) {
+        col = palette().color(QPalette::Highlight);
+    }
+    return col;
+}
+
+QColor WorklaneSidebar::vibrantAccentColor() const {
+    QColor col = accentColor();
+    KConfigGroup appCfg(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("Appearance"));
+    if (appCfg.hasKey("CustomAccentColor")) {
+        // Explicit user preference: use their exact selected color
+        return col;
+    }
+
+    // System theme: dynamically tune vibrancy and contrast against the sidebar canvas
+    KColorScheme windowScheme(QPalette::Active, KColorScheme::Window);
+    QColor bg = windowScheme.background(KColorScheme::NormalBackground).color();
+    bool isDark = bg.lightnessF() < 0.5;
+
+    float h = 0.0f, s = 0.0f, l = 0.0f;
+    col.getHslF(&h, &s, &l);
+    if (h < 0.0f) h = 0.57f; // Default cyan/blue hue if achromatic
+
+    if (isDark) {
+        if (l < 0.65f) {
+            l = std::clamp(l * 1.5f, 0.68f, 0.85f);
+            s = std::clamp(s * 1.1f, 0.70f, 1.0f);
+            col.setHslF(h, s, l);
+        }
+    } else {
+        if (l > 0.40f) {
+            l = std::clamp(l * 0.7f, 0.25f, 0.38f);
+            s = std::clamp(s * 1.1f, 0.70f, 1.0f);
+            col.setHslF(h, s, l);
+        }
+    }
+    return col;
+}
+
+void WorklaneSidebar::updateAccentColor() {
+    if (m_tree) {
+        m_tree->viewport()->update();
+    }
+    update();
 }
 
 QString WorklaneSidebar::formatPwd(const QString& fullPath) const {
