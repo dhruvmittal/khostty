@@ -170,7 +170,6 @@ ghostty_clipboard_read_result_e GhosttyCore::readClipboardCallback(
     size_t available_len,
     bool confirmed)
 {
-    Q_UNUSED(userdata);
     Q_UNUSED(available);
     Q_UNUSED(available_len);
     Q_UNUSED(confirmed);
@@ -202,8 +201,9 @@ ghostty_clipboard_read_result_e GhosttyCore::readClipboardCallback(
         .remember = false
     };
 
-    // If request_userdata is surface, complete it
-    ghostty_surface_t surface = static_cast<ghostty_surface_t>(request_userdata);
+    // userdata is TerminalSurface* configured at surface creation
+    auto* widget = static_cast<TerminalSurface*>(userdata);
+    ghostty_surface_t surface = widget ? widget->surface() : nullptr;
     if (surface) {
         ghostty_surface_complete_clipboard_request(surface, &complete, request_userdata);
         return GHOSTTY_CLIPBOARD_READ_STARTED;
@@ -218,12 +218,11 @@ void GhosttyCore::confirmReadClipboardCallback(
     void* request_userdata,
     ghostty_clipboard_request_e request)
 {
-    Q_UNUSED(userdata);
-    Q_UNUSED(confirm);
     Q_UNUSED(request);
 
     // Auto-confirm clipboard reads
-    ghostty_surface_t surface = static_cast<ghostty_surface_t>(request_userdata);
+    auto* widget = static_cast<TerminalSurface*>(userdata);
+    ghostty_surface_t surface = widget ? widget->surface() : nullptr;
     if (surface && confirm) {
         ghostty_clipboard_complete_s complete = {
             .contents = confirm->contents,
