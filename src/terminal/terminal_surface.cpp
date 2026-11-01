@@ -361,7 +361,11 @@ ghostty_input_key_s TerminalSurface::buildGhosttyKeyEvent(
             }
 
             if (event->modifiers() & Qt::ControlModifier) {
-                if (qkey >= Qt::Key_A && qkey <= Qt::Key_Z) {
+                if (qkey == Qt::Key_BracketLeft) {
+                    unshifted = 0x1B;
+                    textStorage = "\x1b";
+                    key.mods = static_cast<ghostty_input_mods_e>(key.mods & ~GHOSTTY_MODS_CTRL);
+                } else if (qkey >= Qt::Key_A && qkey <= Qt::Key_Z) {
                     textStorage = QByteArray(1, static_cast<char>((qkey - Qt::Key_A) + 'a'));
                 } else if (qkey >= 0x20 && qkey <= 0x7E) {
                     textStorage = QByteArray(1, static_cast<char>(qkey));
@@ -553,7 +557,6 @@ bool TerminalSurface::handleAction(const ghostty_action_s& action) {
 }
 
 void TerminalSurface::handleProcessExited(bool exited) {
-    if (exited) {
-        emit closeRequested();
-    }
+    Q_UNUSED(exited);
+    emit closeRequested();
 }

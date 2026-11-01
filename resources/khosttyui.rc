@@ -28,6 +28,7 @@
       <Action name="next_tab" />
       <Action name="prev_tab" />
       <Separator />
+      <Action name="clear_scrollback" />
       <Action name="view_zoom_in" />
       <Action name="view_zoom_out" />
       <Action name="view_zoom_reset" />

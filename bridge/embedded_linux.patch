@@ -157,3 +157,18 @@
              step.root_module.addCSourceFile(.{
                  .file = b.path("vendor/glad/src/glad_egl.c"),
                  .flags = &.{},
+--- a/build.zig
++++ b/build.zig
+@@ -234,4 +234,5 @@
+                 lib_shared.install("ghostty-internal.so");
+                 lib_static.install("ghostty-internal.a");
+             }
++            resources.install();
+         }
+--- a/src/build/GhosttyResources.zig
++++ b/src/build/GhosttyResources.zig
+@@ -20,1 +20,1 @@
+-            .target = b.graph.host,
++            .target = b.resolveTargetQuery(.{ .os_tag = .linux, .abi = .musl }),
+
+

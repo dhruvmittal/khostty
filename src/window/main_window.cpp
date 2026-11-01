@@ -166,8 +166,24 @@ void MainWindow::setupActions() {
     ac->addAction(QStringLiteral("file_quit"), quitAction);
     ac->setDefaultShortcut(quitAction, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Q));
 
-    KStandardAction::copy(this, &MainWindow::copyText, ac);
-    KStandardAction::paste(this, &MainWindow::pasteText, ac);
+    auto* copyAction = KStandardAction::copy(this, &MainWindow::copyText, ac);
+    copyAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C));
+    ac->setDefaultShortcut(copyAction, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C));
+
+    auto* pasteAction = KStandardAction::paste(this, &MainWindow::pasteText, ac);
+    pasteAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_V));
+    ac->setDefaultShortcut(pasteAction, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_V));
+
+    auto* clearScrollbackAction = new QAction(i18n("Clear Scrollback"), this);
+    connect(clearScrollbackAction, &QAction::triggered, this, [this]() {
+        TerminalSurface* surface = activeSurface();
+        if (surface && surface->surface()) {
+            ghostty_surface_binding_action(surface->surface(), "clear_screen", 12);
+        }
+    });
+    ac->addAction(QStringLiteral("clear_scrollback"), clearScrollbackAction);
+    clearScrollbackAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_K));
+    ac->setDefaultShortcut(clearScrollbackAction, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_K));
 
     // Tab Navigation (Matching Ghostty Defaults: Ctrl+Shift+Left/Right, Ctrl+PageUp/Down)
     auto* nextTabAction = new QAction(i18n("Next Tab"), this);

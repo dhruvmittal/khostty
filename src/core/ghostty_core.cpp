@@ -22,6 +22,15 @@ bool GhosttyCore::initialize(int argc, char** argv) {
         return true;
     }
 
+#ifdef GHOSTTY_PREFIX
+    if (qEnvironmentVariableIsEmpty("TERMINFO_DIRS")) {
+        qputenv("TERMINFO_DIRS", GHOSTTY_PREFIX "/share/terminfo");
+    }
+    if (qEnvironmentVariableIsEmpty("GHOSTTY_RESOURCES_DIR")) {
+        qputenv("GHOSTTY_RESOURCES_DIR", GHOSTTY_PREFIX "/share/ghostty");
+    }
+#endif
+
     int init_res = ghostty_init(static_cast<uintptr_t>(argc), argv);
     if (init_res != 0) {
         qWarning() << "ghostty_init failed with code" << init_res;
@@ -246,11 +255,14 @@ void GhosttyCore::writeClipboardCallback(
     }
 }
 
-void GhosttyCore::closeSurfaceCallback(void* userdata, bool process_exited) {
+void GhosttyCore::closeSurfaceCallback(void* userdata, bool process_alive) {
     TerminalSurface* widget = static_cast<TerminalSurface*>(userdata);
     if (widget) {
-        QMetaObject::invokeMethod(widget, [widget, process_exited]() {
-            widget->handleProcessExited(process_exited);
+        QMetaObject::invokeMethod(widget, [widget, process_alive]() {
+            // When close_surface_cb is invoked, Ghostty requests that the surface be closed.
+            // process_alive indicates whether the child process is still running.
+            // In either case, the surface should be closed.
+            widget->handleProcessExited(!process_alive);
         }, Qt::QueuedConnection);
     }
 }

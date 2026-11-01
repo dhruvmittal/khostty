@@ -58,7 +58,7 @@ private:
         const ghostty_clipboard_content_s* contents,
         size_t len,
         bool confirmed);
-    static void closeSurfaceCallback(void* userdata, bool process_exited);
+    static void closeSurfaceCallback(void* userdata, bool process_alive);
 
     ghostty_app_t m_app = nullptr;
     ghostty_config_t m_config = nullptr;

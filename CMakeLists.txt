@@ -113,6 +113,10 @@ if(TARGET LayerShellQt::Interface)
     target_compile_definitions(khostty PRIVATE KHOSTTY_HAS_LAYERSHELL=1)
 endif()
 
+if(GHOSTTY_PREFIX)
+    target_compile_definitions(khostty PRIVATE GHOSTTY_PREFIX="${GHOSTTY_PREFIX}")
+endif()
+
 include(GNUInstallDirs)
 install(TARGETS khostty RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 
