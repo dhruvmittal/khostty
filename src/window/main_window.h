@@ -1,11 +1,13 @@
 #pragma once
 
 #include <KXmlGuiWindow>
+#include <QPointer>
 
 class QTabBar;
 class QStackedWidget;
 class WorklaneView;
 class TerminalSurface;
+class KCommandBar;
 
 class MainWindow : public KXmlGuiWindow {
     Q_OBJECT
@@ -34,6 +36,7 @@ private slots:
     void equalizeSplits();
     void copyText();
     void pasteText();
+    void showPreferencesDialog();
     void showCommandBar();
     void updateTitle(const QString& title);
 
@@ -48,4 +51,5 @@ private:
 
     QTabBar* m_tabBar = nullptr;
     QStackedWidget* m_stack = nullptr;
+    QPointer<KCommandBar> m_commandBar;
 };

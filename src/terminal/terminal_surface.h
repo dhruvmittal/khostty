@@ -23,6 +23,8 @@ public:
 
     void pasteText(const QString& text);
     void sendText(const QString& text);
+    void applyFontConfig();
+    void setFontSize(float points);
 
 signals:
     void titleChanged(const QString& title);
@@ -35,6 +37,7 @@ signals:
     void gotoTabRequested(int tabIndex);
     void nextTabRequested();
     void previousTabRequested();
+    void toggleCommandPaletteRequested();
 
 protected:
     void initializeGL() override;

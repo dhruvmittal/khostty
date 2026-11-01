@@ -24,6 +24,7 @@ public:
     void registerSurface(ghostty_surface_t surface, TerminalSurface* widget);
     void unregisterSurface(ghostty_surface_t surface);
     TerminalSurface* findSurface(ghostty_surface_t surface) const;
+    QList<TerminalSurface*> allSurfaces() const { return m_surfaces.values(); }
 
 public slots:
     void tick();

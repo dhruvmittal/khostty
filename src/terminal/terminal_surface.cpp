@@ -7,7 +7,10 @@
 #include <QWheelEvent>
 #include <QFocusEvent>
 #include <QOpenGLContext>
+#include <QFontDatabase>
 #include <QDebug>
+#include <KSharedConfig>
+#include <KConfigGroup>
 
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
@@ -51,6 +54,22 @@ TerminalSurface::TerminalSurface(QWidget* parent)
     config.platform.linux_platform.egl_display = nullptr;
     config.scale_factor = devicePixelRatioF();
     config.userdata = this;
+
+    // Dedicated Khostty font configuration from khosttyrc
+    KConfigGroup fontGroup(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("Font"));
+    bool useSystemFixed = fontGroup.readEntry("UseSystemFixedFont", true);
+    if (useSystemFixed) {
+        QFont sysFixed = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+        float pt = static_cast<float>(sysFixed.pointSizeF());
+        if (pt <= 0.0f) pt = static_cast<float>(sysFixed.pointSize());
+        if (pt <= 0.0f) pt = 10.0f;
+        config.font_size = pt;
+    } else {
+        float customSize = fontGroup.readEntry("FontSize", 0.0f);
+        if (customSize > 0.0f) {
+            config.font_size = customSize;
+        }
+    }
 
     m_surface = ghostty_surface_new(app, &config);
     if (!m_surface) {
@@ -388,6 +407,13 @@ ghostty_input_key_s TerminalSurface::buildGhosttyKeyEvent(
 void TerminalSurface::keyPressEvent(QKeyEvent* event) {
     if (!m_surface) return;
 
+    if ((event->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier)) == (Qt::ControlModifier | Qt::ShiftModifier) &&
+        event->key() == Qt::Key_P) {
+        emit toggleCommandPaletteRequested();
+        event->accept();
+        return;
+    }
+
     QByteArray textStorage;
     ghostty_input_action_e action = event->isAutoRepeat() ? GHOSTTY_ACTION_REPEAT : GHOSTTY_ACTION_PRESS;
     ghostty_input_key_s key = buildGhosttyKeyEvent(event, action, textStorage);
@@ -536,6 +562,10 @@ bool TerminalSurface::handleAction(const ghostty_action_s& action) {
             emit bell();
             return true;
 
+        case GHOSTTY_ACTION_TOGGLE_COMMAND_PALETTE:
+            emit toggleCommandPaletteRequested();
+            return true;
+
         case GHOSTTY_ACTION_CLOSE_WINDOW:
         case GHOSTTY_ACTION_CLOSE_TAB:
             emit closeRequested();
@@ -559,4 +589,32 @@ bool TerminalSurface::handleAction(const ghostty_action_s& action) {
 void TerminalSurface::handleProcessExited(bool exited) {
     Q_UNUSED(exited);
     emit closeRequested();
+}
+
+void TerminalSurface::setFontSize(float points) {
+    if (!m_surface || points <= 0.0f) return;
+    QByteArray actionStr = QStringLiteral("set_font_size:%1").arg(points).toUtf8();
+    ghostty_surface_binding_action(m_surface, actionStr.constData(), static_cast<uintptr_t>(actionStr.size()));
+}
+
+void TerminalSurface::applyFontConfig() {
+    if (!m_surface) return;
+
+    KConfigGroup fontGroup(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("Font"));
+    bool useSystemFixed = fontGroup.readEntry("UseSystemFixedFont", true);
+    if (useSystemFixed) {
+        QFont sysFixed = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+        float pt = static_cast<float>(sysFixed.pointSizeF());
+        if (pt <= 0.0f) pt = static_cast<float>(sysFixed.pointSize());
+        if (pt <= 0.0f) pt = 10.0f;
+        setFontSize(pt);
+    } else {
+        float customSize = fontGroup.readEntry("FontSize", 0.0f);
+        if (customSize > 0.0f) {
+            setFontSize(customSize);
+        } else {
+            // Reset to Ghostty original font size (from ~/.config/ghostty/config or default)
+            ghostty_surface_binding_action(m_surface, "reset_font_size", 15);
+        }
+    }
 }

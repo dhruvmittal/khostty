@@ -16,7 +16,18 @@
 #include <QTabBar>
 #include <QStackedWidget>
 #include <QVBoxLayout>
+#include <QHBoxLayout>
 #include <QMenu>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QGroupBox>
+#include <QCheckBox>
+#include <QLabel>
+#include <QDoubleSpinBox>
+#include <QPushButton>
+#include <QFontDatabase>
+#include <KSharedConfig>
+#include <KConfigGroup>
 
 MainWindow::MainWindow(QWidget* parent)
     : KXmlGuiWindow(parent)
@@ -117,6 +128,7 @@ WorklaneView* MainWindow::createTab(const QString& title) {
         connect(surface, &TerminalSurface::gotoTabRequested, this, &MainWindow::gotoTab, Qt::UniqueConnection);
         connect(surface, &TerminalSurface::nextTabRequested, this, &MainWindow::nextTab, Qt::UniqueConnection);
         connect(surface, &TerminalSurface::previousTabRequested, this, &MainWindow::prevTab, Qt::UniqueConnection);
+        connect(surface, &TerminalSurface::toggleCommandPaletteRequested, this, &MainWindow::showCommandBar, Qt::UniqueConnection);
     };
 
     connect(worklane, &WorklaneView::activeSurfaceChanged, this, wireSurface);
@@ -229,8 +241,16 @@ void MainWindow::setupActions() {
         cmdBarAction = new QAction(i18n("Open Command Bar"), this);
         connect(cmdBarAction, &QAction::triggered, this, &MainWindow::showCommandBar);
         ac->addAction(QStringLiteral("open_kcommand_bar"), cmdBarAction);
-        ac->setDefaultShortcut(cmdBarAction, QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_I));
     }
+    cmdBarAction->setShortcuts({
+        QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_P),
+        QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_I)
+    });
+    ac->setDefaultShortcuts(cmdBarAction, {
+        QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_P),
+        QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_I)
+    });
+    addAction(cmdBarAction);
 
     // Worklane Split Actions (Matching Ghostty Defaults: Ctrl+Shift+O Right, Ctrl+Shift+E Down)
     auto* newColAction = new QAction(i18n("Split Right"), this);
@@ -290,6 +310,9 @@ void MainWindow::setupActions() {
     });
     ac->addAction(QStringLiteral("focus_down"), focusDownAction);
     ac->setDefaultShortcut(focusDownAction, QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_Down));
+
+    // Settings
+    KStandardAction::preferences(this, &MainWindow::showPreferencesDialog, ac);
 }
 
 void MainWindow::newWindow() {
@@ -418,14 +441,97 @@ void MainWindow::pasteText() {
     }
 }
 
+void MainWindow::showPreferencesDialog() {
+    QDialog dialog(this);
+    dialog.setWindowTitle(i18n("Configure — Khostty"));
+    dialog.setMinimumWidth(400);
+
+    auto* layout = new QVBoxLayout(&dialog);
+
+    auto* fontGroup = new QGroupBox(i18n("Font Settings"), &dialog);
+    auto* fontLayout = new QVBoxLayout(fontGroup);
+
+    QFont sysFixed = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    float sysPt = static_cast<float>(sysFixed.pointSizeF());
+    if (sysPt <= 0.0f) sysPt = static_cast<float>(sysFixed.pointSize());
+    if (sysPt <= 0.0f) sysPt = 10.0f;
+
+    KConfigGroup cfg(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("Font"));
+    bool useSys = cfg.readEntry("UseSystemFixedFont", true);
+    float currentCustom = cfg.readEntry("FontSize", 0.0f);
+    if (currentCustom <= 0.0f) currentCustom = sysPt;
+
+    auto* useSysCheck = new QCheckBox(
+        i18n("Use KDE system fixed font (%1, %2 pt)", sysFixed.family(), sysPt),
+        fontGroup
+    );
+    useSysCheck->setChecked(useSys);
+    fontLayout->addWidget(useSysCheck);
+
+    auto* customSizeLayout = new QHBoxLayout();
+    auto* customSizeLabel = new QLabel(i18n("Custom font size (pt):"), fontGroup);
+    auto* customSizeSpin = new QDoubleSpinBox(fontGroup);
+    customSizeSpin->setRange(6.0, 72.0);
+    customSizeSpin->setSingleStep(0.5);
+    customSizeSpin->setValue(currentCustom);
+    customSizeSpin->setEnabled(!useSys);
+
+    customSizeLayout->addWidget(customSizeLabel);
+    customSizeLayout->addWidget(customSizeSpin);
+    fontLayout->addLayout(customSizeLayout);
+
+    connect(useSysCheck, &QCheckBox::toggled, customSizeSpin, [customSizeSpin](bool checked) {
+        customSizeSpin->setEnabled(!checked);
+    });
+
+    layout->addWidget(fontGroup);
+
+    auto* buttonBox = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel | QDialogButtonBox::Apply,
+        Qt::Horizontal,
+        &dialog
+    );
+    layout->addWidget(buttonBox);
+
+    auto applyChanges = [=]() {
+        KConfigGroup group(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("Font"));
+        group.writeEntry("UseSystemFixedFont", useSysCheck->isChecked());
+        group.writeEntry("FontSize", customSizeSpin->value());
+        group.sync();
+
+        for (auto* surface : GhosttyCore::instance().allSurfaces()) {
+            if (surface) {
+                surface->applyFontConfig();
+            }
+        }
+    };
+
+    connect(buttonBox->button(QDialogButtonBox::Apply), &QPushButton::clicked, applyChanges);
+    connect(buttonBox, &QDialogButtonBox::accepted, [&dialog, applyChanges]() {
+        applyChanges();
+        dialog.accept();
+    });
+    connect(buttonBox, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    dialog.exec();
+}
+
 void MainWindow::showCommandBar() {
+    if (m_commandBar) {
+        m_commandBar->close();
+        return;
+    }
+
     auto* bar = new KCommandBar(this);
     bar->setAttribute(Qt::WA_DeleteOnClose);
+    m_commandBar = bar;
+
     KCommandBar::ActionGroup group;
     group.name = QStringLiteral("Actions");
     group.actions = actionCollection()->actions();
     bar->setActions({group});
     bar->show();
+    bar->raise();
 }
 
 void MainWindow::updateTitle(const QString& title) {
