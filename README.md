@@ -82,6 +82,16 @@ cmake --build build
 
 </details>
 
+### Install on Archlinux
+
+<details>
+<summary><b>PKGBUILD</b></summary>
+```bash
+# Build like you got this from the AUR
+makepkg -si
+```
+</details>
+
 ---
 
 ## Keybindings

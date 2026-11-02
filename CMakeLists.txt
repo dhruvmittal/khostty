@@ -7,9 +7,9 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(ECM REQUIRED NO_MODULE)
+find_package(ECM 6.0.0 REQUIRED NO_MODULE)
 set(CMAKE_MODULE_PATH ${ECM_MODULE_PATH})
-include(KDEInstallDirs)
+include(KDEInstallDirs6)
 include(KDECMakeSettings)
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS
@@ -50,7 +50,7 @@ if(GHOSTTY_PREFIX)
     set(GHOSTTY_INCLUDE_DIR "${GHOSTTY_PREFIX}/include")
     set(GHOSTTY_LIB_DIR "${GHOSTTY_PREFIX}/lib")
     find_library(GHOSTTY_LIBRARY
-        NAMES ghostty-internal ghostty
+        NAMES ghostty-internal.so ghostty-internal libghostty.so ghostty
         PATHS "${GHOSTTY_LIB_DIR}"
         NO_DEFAULT_PATH
         REQUIRED
