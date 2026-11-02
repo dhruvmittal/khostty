@@ -86,10 +86,12 @@ cmake --build build
 
 <details>
 <summary><b>PKGBUILD</b></summary>
+
 ```bash
 # Build like you got this from the AUR
 makepkg -si
 ```
+
 </details>
 
 ---
