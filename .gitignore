@@ -6,3 +6,9 @@ zig-out/
 *.o
 *.a
 *.so
+*.pkg.tar.zst
+ghostty-*.tar.gz
+pkg/
+src/ghostty-*/
+src/ghostty-prefix/
+src/zig-cache/

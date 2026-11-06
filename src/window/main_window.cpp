@@ -1,968 +1,1162 @@
 #include "window/main_window.h"
-#include "window/worklane_sidebar.h"
-#include "terminal/worklane_view.h"
-#include "terminal/terminal_surface.h"
 #include "core/ghostty_core.h"
+#include "terminal/terminal_surface.h"
+#include "terminal/worklane_view.h"
+#include "window/worklane_sidebar.h"
 
-#include <KActionCollection>
-#include <KStandardAction>
-#include <KCommandBar>
-#include <KLocalizedString>
-#include <KNotification>
-#include <KToolBar>
 #include <KAcceleratorManager>
+#include <KActionCollection>
+#include <KColorButton>
+#include <KCommandBar>
+#include <KConfigGroup>
+#include <KLocalizedString>
 #include <KMessageBox>
-#include <QApplication>
-#include <QClipboard>
-#include <QKeySequence>
+#include <KNotification>
+#include <KSharedConfig>
+#include <KStandardAction>
+#include <KToolBar>
+#include <KXMLGUIFactory>
 #include <QAction>
-#include <QTabBar>
-#include <QStackedWidget>
-#include <QSplitter>
-#include <QVBoxLayout>
-#include <QHBoxLayout>
-#include <QMenu>
-#include <QMenuBar>
+#include <QApplication>
+#include <QCheckBox>
+#include <QClipboard>
+#include <QDesktopServices>
 #include <QDialog>
 #include <QDialogButtonBox>
-#include <QGroupBox>
-#include <QCheckBox>
-#include <QLabel>
-#include <QDoubleSpinBox>
-#include <QPushButton>
-#include <QFontDatabase>
-#include <KColorButton>
-#include <KSharedConfig>
-#include <KConfigGroup>
-#include <KXMLGUIFactory>
-#include <QDesktopServices>
-#include <QStandardPaths>
 #include <QDir>
+#include <QDoubleSpinBox>
 #include <QFile>
+#include <QFontDatabase>
+#include <QGroupBox>
+#include <QHBoxLayout>
+#include <QKeySequence>
+#include <QLabel>
+#include <QMenu>
+#include <QMenuBar>
+#include <QPushButton>
+#include <QSplitter>
+#include <QStackedWidget>
+#include <QStandardPaths>
+#include <QTabBar>
 #include <QTextStream>
+#include <QVBoxLayout>
 
-MainWindow::MainWindow(QWidget* parent)
-    : KXmlGuiWindow(parent)
-{
-    m_tabBar = new QTabBar(this);
-    m_tabBar->setObjectName(QStringLiteral("khostty-tabs"));
-    m_tabBar->setDocumentMode(true);
-    m_tabBar->setMovable(true);
-    m_tabBar->setTabsClosable(true);
-    m_tabBar->setExpanding(false);
-    m_tabBar->setElideMode(Qt::ElideRight);
-    m_tabBar->setContextMenuPolicy(Qt::CustomContextMenu);
-    m_tabBar->setFocusPolicy(Qt::NoFocus);
-    KAcceleratorManager::setNoAccel(m_tabBar);
-    KAcceleratorManager::setNoAccel(this);
-    if (menuBar()) {
-        KAcceleratorManager::setNoAccel(menuBar());
-    }
+MainWindow::MainWindow(QWidget *parent) : KXmlGuiWindow(parent) {
+  m_tabBar = new QTabBar(this);
+  m_tabBar->setObjectName(QStringLiteral("khostty-tabs"));
+  m_tabBar->setDocumentMode(true);
+  m_tabBar->setMovable(true);
+  m_tabBar->setTabsClosable(true);
+  m_tabBar->setExpanding(false);
+  m_tabBar->setElideMode(Qt::ElideRight);
+  m_tabBar->setContextMenuPolicy(Qt::CustomContextMenu);
+  m_tabBar->setFocusPolicy(Qt::NoFocus);
+  KAcceleratorManager::setNoAccel(m_tabBar);
+  KAcceleratorManager::setNoAccel(this);
+  if (menuBar()) {
+    KAcceleratorManager::setNoAccel(menuBar());
+  }
 
-    m_stack = new QStackedWidget(this);
+  m_stack = new QStackedWidget(this);
 
-    m_sidebar = new WorklaneSidebar(this, this);
-    m_sidebar->setVisible(false);
-    connect(m_sidebar, &WorklaneSidebar::newWorklaneRequested, this, &MainWindow::newTab);
+  m_sidebar = new WorklaneSidebar(this, this);
+  m_sidebar->setVisible(false);
+  connect(m_sidebar, &WorklaneSidebar::newWorklaneRequested, this,
+          &MainWindow::newTab);
 
-    // Main horizontal splitter holding [ WorklaneSidebar | ContentArea ]
-    m_mainSplitter = new QSplitter(Qt::Horizontal, this);
-    m_mainSplitter->setHandleWidth(1);
-    m_mainSplitter->setChildrenCollapsible(false);
-    m_mainSplitter->addWidget(m_sidebar);
+  // Main horizontal splitter holding [ WorklaneSidebar | ContentArea ]
+  m_mainSplitter = new QSplitter(Qt::Horizontal, this);
+  m_mainSplitter->setHandleWidth(1);
+  m_mainSplitter->setChildrenCollapsible(false);
+  m_mainSplitter->addWidget(m_sidebar);
 
-    auto* rightArea = new QWidget(m_mainSplitter);
-    auto* rightLayout = new QVBoxLayout(rightArea);
-    rightLayout->setContentsMargins(0, 0, 0, 0);
-    rightLayout->setSpacing(0);
-    rightLayout->addWidget(m_tabBar);
-    rightLayout->addWidget(m_stack, 1);
-    m_mainSplitter->addWidget(rightArea);
+  auto *rightArea = new QWidget(m_mainSplitter);
+  auto *rightLayout = new QVBoxLayout(rightArea);
+  rightLayout->setContentsMargins(0, 0, 0, 0);
+  rightLayout->setSpacing(0);
+  rightLayout->addWidget(m_tabBar);
+  rightLayout->addWidget(m_stack, 1);
+  m_mainSplitter->addWidget(rightArea);
 
-    m_mainSplitter->setStretchFactor(0, 0);
-    m_mainSplitter->setStretchFactor(1, 1);
+  m_mainSplitter->setStretchFactor(0, 0);
+  m_mainSplitter->setStretchFactor(1, 1);
 
-    setCentralWidget(m_mainSplitter);
+  setCentralWidget(m_mainSplitter);
 
-    connect(m_tabBar, &QTabBar::currentChanged, m_stack, &QStackedWidget::setCurrentIndex);
-    connect(m_tabBar, &QTabBar::currentChanged, this, &MainWindow::onTabChanged);
-    connect(m_tabBar, &QTabBar::tabCloseRequested, this, &MainWindow::closeTab);
-    connect(m_tabBar, &QTabBar::tabMoved, this, [this](int from, int to) {
-        QWidget* page = m_stack->widget(from);
-        if (!page) return;
-        m_stack->removeWidget(page);
-        m_stack->insertWidget(to, page);
-        m_stack->setCurrentIndex(to);
-    });
-    connect(m_tabBar, &QTabBar::customContextMenuRequested, this, [this](const QPoint& position) {
-        const int index = m_tabBar->tabAt(position);
-        if (index < 0) return;
-        QMenu menu(this);
-        QAction* closeAction = menu.addAction(i18n("Close Tab"));
-        if (menu.exec(m_tabBar->mapToGlobal(position)) == closeAction) {
-            closeTab(index);
-        }
-    });
-
-    createTab();
-
-    setupActions();
-    setupGUI(Keys | Save | Create, QStringLiteral("khosttyui.rc"));
-    if (menuBar()) {
-        KAcceleratorManager::setNoAccel(menuBar());
-    }
-    if (toolBar()) {
-        toolBar()->hide();
-    }
-
-    connect(&GhosttyCore::instance(), &GhosttyCore::newWindowRequested, this, &MainWindow::newWindow);
-    connect(&GhosttyCore::instance(), &GhosttyCore::newTabRequested, this, &MainWindow::newTab);
-    connect(&GhosttyCore::instance(), &GhosttyCore::quitRequested, qApp, &QCoreApplication::quit);
-
-    connect(qApp, &QGuiApplication::fontDatabaseChanged, this, [this]() {
-        GhosttyCore::instance().reloadConfig();
-        for (auto* surface : GhosttyCore::instance().allSurfaces()) {
-            if (surface) {
-                surface->applyFontConfig();
+  connect(m_tabBar, &QTabBar::currentChanged, m_stack,
+          &QStackedWidget::setCurrentIndex);
+  connect(m_tabBar, &QTabBar::currentChanged, this, &MainWindow::onTabChanged);
+  connect(m_tabBar, &QTabBar::tabCloseRequested, this, &MainWindow::closeTab);
+  connect(m_tabBar, &QTabBar::tabMoved, this, [this](int from, int to) {
+    QWidget *page = m_stack->widget(from);
+    if (!page)
+      return;
+    m_stack->removeWidget(page);
+    m_stack->insertWidget(to, page);
+    m_stack->setCurrentIndex(to);
+  });
+  connect(m_tabBar, &QTabBar::customContextMenuRequested, this,
+          [this](const QPoint &position) {
+            const int index = m_tabBar->tabAt(position);
+            if (index < 0)
+              return;
+            QMenu menu(this);
+            QAction *closeAction = menu.addAction(i18n("Close Tab"));
+            if (menu.exec(m_tabBar->mapToGlobal(position)) == closeAction) {
+              closeTab(index);
             }
-        }
-    });
+          });
 
-    syncColorScheme();
+  createTab();
 
-    resize(1000, 700);
-    setWindowTitle(QStringLiteral("Khostty"));
+  setupActions();
+  setupGUI(Keys | Save | Create, QStringLiteral("khosttyui.rc"));
+  if (menuBar()) {
+    KAcceleratorManager::setNoAccel(menuBar());
+  }
+  if (toolBar()) {
+    toolBar()->hide();
+  }
+
+  connect(&GhosttyCore::instance(), &GhosttyCore::newWindowRequested, this,
+          &MainWindow::newWindow);
+  connect(&GhosttyCore::instance(), &GhosttyCore::newTabRequested, this,
+          &MainWindow::newTab);
+  connect(&GhosttyCore::instance(), &GhosttyCore::quitRequested, qApp,
+          &QCoreApplication::quit);
+
+  connect(qApp, &QGuiApplication::fontDatabaseChanged, this, [this]() {
+    GhosttyCore::instance().reloadConfig();
+    for (auto *surface : GhosttyCore::instance().allSurfaces()) {
+      if (surface) {
+        surface->applyFontConfig();
+      }
+    }
+  });
+
+  syncColorScheme();
+
+  resize(1000, 700);
+  setWindowTitle(QStringLiteral("Khostty"));
 }
 
 MainWindow::~MainWindow() = default;
 
-int MainWindow::tabCount() const {
-    return m_stack ? m_stack->count() : 0;
-}
+int MainWindow::tabCount() const { return m_stack ? m_stack->count() : 0; }
 
-WorklaneView* MainWindow::worklaneAt(int index) const {
-    if (!m_stack || index < 0 || index >= m_stack->count()) return nullptr;
-    return qobject_cast<WorklaneView*>(m_stack->widget(index));
+WorklaneView *MainWindow::worklaneAt(int index) const {
+  if (!m_stack || index < 0 || index >= m_stack->count())
+    return nullptr;
+  return qobject_cast<WorklaneView *>(m_stack->widget(index));
 }
 
 QString MainWindow::tabText(int index) const {
-    if (!m_tabBar || index < 0 || index >= m_tabBar->count()) return QString();
-    return m_tabBar->tabText(index);
+  if (!m_tabBar || index < 0 || index >= m_tabBar->count())
+    return QString();
+  return m_tabBar->tabText(index);
 }
 
 void MainWindow::setCurrentTabIndex(int index) {
-    if (m_tabBar && index >= 0 && index < m_tabBar->count()) {
-        m_tabBar->setCurrentIndex(index);
+  if (m_tabBar && index >= 0 && index < m_tabBar->count()) {
+    m_tabBar->setCurrentIndex(index);
+  }
+}
+
+void MainWindow::moveTab(int fromIndex, int toIndex) {
+  if (fromIndex == toIndex || fromIndex < 0 || toIndex < 0)
+    return;
+  if (fromIndex >= m_tabBar->count() || toIndex >= m_tabBar->count())
+    return;
+  m_tabBar->moveTab(fromIndex, toIndex);
+  if (m_sidebar && m_sidebarVisible) {
+    m_sidebar->refreshTree();
+  }
+}
+
+void MainWindow::movePane(TerminalSurface *surface, int targetTabIndex,
+                          TerminalSurface *targetSurface, bool insertAfter,
+                          bool stackUnder) {
+  if (!surface)
+    return;
+
+  // Locate source tab / WorklaneView
+  WorklaneView *sourceWl = nullptr;
+  int sourceTabIndex = -1;
+  for (int i = 0; i < tabCount(); ++i) {
+    WorklaneView *wl = worklaneAt(i);
+    if (wl && wl->columnIndexOf(surface) != -1) {
+      sourceWl = wl;
+      sourceTabIndex = i;
+      break;
     }
+  }
+  if (!sourceWl || sourceTabIndex < 0)
+    return;
+
+  WorklaneView *targetWl = worklaneAt(targetTabIndex);
+  if (!targetWl)
+    return;
+
+  // Check host / session compatibility (e.g. SSH / remote boundaries)
+  if (!targetWl->canAcceptPaneFrom(sourceWl))
+    return;
+
+  // Guard no-op moves
+  if (sourceWl == targetWl) {
+    if (sourceWl->paneCount() <= 1) {
+      return;
+    }
+    if (targetSurface == surface) {
+      return;
+    }
+    int srcCol = sourceWl->columnIndexOf(surface);
+    int srcRow = sourceWl->rowIndexOf(surface);
+    if (targetSurface) {
+      int tgtCol = targetWl->columnIndexOf(targetSurface);
+      int tgtRow = targetWl->rowIndexOf(targetSurface);
+      if (!stackUnder) {
+        if (sourceWl->rowCount(srcCol) == 1 && srcCol == tgtCol) {
+          return;
+        }
+        if (srcCol == tgtCol - 1 && !insertAfter)
+          return;
+        if (srcCol == tgtCol + 1 && insertAfter)
+          return;
+      } else {
+        if (srcCol == tgtCol && srcRow == tgtRow + 1) {
+          return;
+        }
+      }
+    }
+  }
+
+  TerminalPane *pane = sourceWl->detachSurface(surface);
+  if (!pane)
+    return;
+
+  if (stackUnder) {
+    if (targetSurface) {
+      int destCol = targetWl->columnIndexOf(targetSurface);
+      int destRow = targetWl->rowIndexOf(targetSurface);
+      if (destCol != -1 && destRow != -1) {
+        targetWl->attachPaneToColumn(pane, destCol, destRow + 1);
+      } else {
+        int lastCol = std::max(0, targetWl->columnCount() - 1);
+        targetWl->attachPaneToColumn(pane, lastCol,
+                                     targetWl->rowCount(lastCol));
+      }
+    } else {
+      int lastCol = std::max(0, targetWl->columnCount() - 1);
+      targetWl->attachPaneToColumn(pane, lastCol, targetWl->rowCount(lastCol));
+    }
+  } else {
+    if (targetSurface) {
+      int destCol = targetWl->columnIndexOf(targetSurface);
+      int insertCol = (destCol != -1) ? (insertAfter ? destCol + 1 : destCol)
+                                      : targetWl->columnCount();
+      targetWl->attachPaneAsColumn(pane, insertCol);
+    } else {
+      targetWl->attachPaneAsColumn(pane, targetWl->columnCount());
+    }
+  }
+
+  int currentTargetIdx = m_stack->indexOf(targetWl);
+  if (currentTargetIdx != -1) {
+    setCurrentTabIndex(currentTargetIdx);
+    updateTabTitleWithSplitCount(currentTargetIdx);
+  }
+  if (sourceTabIndex >= 0 && sourceTabIndex < m_stack->count()) {
+    updateTabTitleWithSplitCount(sourceTabIndex);
+  }
+  if (m_sidebar && m_sidebarVisible) {
+    m_sidebar->refreshTree();
+  }
 }
 
 void MainWindow::toggleSidebar() {
-    m_sidebarVisible = !m_sidebarVisible;
-    if (m_toggleSidebarAction && m_toggleSidebarAction->isChecked() != m_sidebarVisible) {
-        m_toggleSidebarAction->setChecked(m_sidebarVisible);
+  m_sidebarVisible = !m_sidebarVisible;
+  if (m_toggleSidebarAction &&
+      m_toggleSidebarAction->isChecked() != m_sidebarVisible) {
+    m_toggleSidebarAction->setChecked(m_sidebarVisible);
+  }
+  if (m_sidebar) {
+    if (!m_sidebarVisible) {
+      // Save width before hiding
+      QList<int> currentSizes = m_mainSplitter->sizes();
+      if (!currentSizes.isEmpty() && currentSizes[0] >= 120) {
+        m_sidebarSavedWidth = currentSizes[0];
+      }
     }
-    if (m_sidebar) {
-        if (!m_sidebarVisible) {
-            // Save width before hiding
-            QList<int> currentSizes = m_mainSplitter->sizes();
-            if (!currentSizes.isEmpty() && currentSizes[0] >= 120) {
-                m_sidebarSavedWidth = currentSizes[0];
-            }
-        }
-        m_sidebar->setVisible(m_sidebarVisible);
-        if (m_sidebarVisible) {
-            m_sidebar->refreshTree();
-            QList<int> sizes = m_mainSplitter->sizes();
-            if (sizes.size() >= 2) {
-                int targetW = std::clamp(m_sidebarSavedWidth, 180, 450);
-                sizes[0] = targetW;
-                sizes[1] = std::max(300, sizes[1] - targetW);
-                m_mainSplitter->setSizes(sizes);
-            }
-        }
+    m_sidebar->setVisible(m_sidebarVisible);
+    if (m_sidebarVisible) {
+      m_sidebar->refreshTree();
+      QList<int> sizes = m_mainSplitter->sizes();
+      if (sizes.size() >= 2) {
+        int targetW = std::clamp(m_sidebarSavedWidth, 180, 450);
+        sizes[0] = targetW;
+        sizes[1] = std::max(300, sizes[1] - targetW);
+        m_mainSplitter->setSizes(sizes);
+      }
     }
-    updateTabBarVisibility();
+  }
+  updateTabBarVisibility();
 }
 
 void MainWindow::updateTabBarVisibility() {
-    if (m_sidebarVisible) {
-        m_tabBar->hide();
-    } else {
-        bool multiTab = m_tabBar->count() > 1;
-        m_tabBar->setVisible(multiTab);
-    }
+  if (m_sidebarVisible) {
+    m_tabBar->hide();
+  } else {
     bool multiTab = m_tabBar->count() > 1;
-    for (auto* action : m_tabSwitchActions) {
-        if (action) {
-            action->setEnabled(multiTab);
-        }
+    m_tabBar->setVisible(multiTab);
+  }
+  bool multiTab = m_tabBar->count() > 1;
+  for (auto *action : m_tabSwitchActions) {
+    if (action) {
+      action->setEnabled(multiTab);
     }
+  }
 }
 
 void MainWindow::updateTabTitleWithSplitCount(int index) {
-    if (index < 0 || index >= m_stack->count()) return;
-    auto* worklane = qobject_cast<WorklaneView*>(m_stack->widget(index));
-    if (!worklane) return;
+  if (index < 0 || index >= m_stack->count())
+    return;
+  auto *worklane = qobject_cast<WorklaneView *>(m_stack->widget(index));
+  if (!worklane)
+    return;
 
-    QString baseTitle = worklane->activeTitle();
-    if (baseTitle.isEmpty()) baseTitle = i18n("Terminal");
+  QString baseTitle = worklane->activeTitle();
+  if (baseTitle.isEmpty())
+    baseTitle = i18n("Terminal");
 
-    int pCount = worklane->paneCount();
-    QString displayTitle;
-    if (pCount > 1) {
-        displayTitle = QStringLiteral("%1 · %2").arg(baseTitle).arg(pCount);
-    } else {
-        displayTitle = baseTitle;
-    }
+  int pCount = worklane->paneCount();
+  QString displayTitle;
+  if (pCount > 1) {
+    displayTitle = QStringLiteral("%1 · %2").arg(baseTitle).arg(pCount);
+  } else {
+    displayTitle = baseTitle;
+  }
 
-    m_tabBar->setTabText(index, displayTitle);
-    m_tabBar->setTabToolTip(index, displayTitle);
+  m_tabBar->setTabText(index, displayTitle);
+  m_tabBar->setTabToolTip(index, displayTitle);
 
-    if (worklane == currentWorklane()) {
-        updateTitle(baseTitle);
-    }
+  if (worklane == currentWorklane()) {
+    updateTitle(baseTitle);
+  }
 
-    if (m_sidebar && m_sidebarVisible) {
-        m_sidebar->scheduleRefresh();
-    }
+  if (m_sidebar && m_sidebarVisible) {
+    m_sidebar->scheduleRefresh();
+  }
 }
 
-WorklaneView* MainWindow::createTab(const QString& title, const QString& initialDir) {
-    QString dir = initialDir.trimmed();
-    if (dir.isEmpty()) {
-        dir = QDir::homePath();
-    }
-    auto* worklane = new WorklaneView(m_stack, dir);
+WorklaneView *MainWindow::createTab(const QString &title,
+                                    const QString &initialDir) {
+  QString dir = initialDir.trimmed();
+  if (dir.isEmpty()) {
+    dir = QDir::homePath();
+  }
+  auto *worklane = new WorklaneView(m_stack, dir);
 
-    QString tabTitle = title.isEmpty() ? i18n("Terminal") : title;
-    int idx = m_stack->addWidget(worklane);
-    m_tabBar->insertTab(idx, tabTitle);
-    m_tabBar->setTabToolTip(idx, tabTitle);
-    m_tabBar->setCurrentIndex(idx);
-    updateTabBarVisibility();
+  QString tabTitle = title.isEmpty() ? i18n("Terminal") : title;
+  int idx = m_stack->addWidget(worklane);
+  m_tabBar->insertTab(idx, tabTitle);
+  m_tabBar->setTabToolTip(idx, tabTitle);
+  m_tabBar->setCurrentIndex(idx);
+  updateTabBarVisibility();
 
-    connect(worklane, &WorklaneView::titleChanged, this, [this, worklane](const QString&) {
-        int tabIdx = m_stack->indexOf(worklane);
-        if (tabIdx != -1) {
-            updateTabTitleWithSplitCount(tabIdx);
-        }
-    });
-
-    connect(worklane, &WorklaneView::layoutChanged, this, [this, worklane]() {
-        int tabIdx = m_stack->indexOf(worklane);
-        if (tabIdx != -1) {
-            updateTabTitleWithSplitCount(tabIdx);
-        }
-    });
-
-    connect(worklane, &WorklaneView::empty, this, [this, worklane]() {
-        int tabIdx = m_stack->indexOf(worklane);
-        if (tabIdx != -1) {
-            closeTab(tabIdx);
-        }
-    });
-
-    auto wireSurface = [this](TerminalSurface* surface) {
-        if (!surface) return;
-        connect(surface, &TerminalSurface::gotoTabRequested, this, &MainWindow::gotoTab, Qt::UniqueConnection);
-        connect(surface, &TerminalSurface::nextTabRequested, this, &MainWindow::nextTab, Qt::UniqueConnection);
-        connect(surface, &TerminalSurface::previousTabRequested, this, &MainWindow::prevTab, Qt::UniqueConnection);
-        connect(surface, &TerminalSurface::toggleCommandPaletteRequested, this, &MainWindow::showCommandBar, Qt::UniqueConnection);
-        connect(surface, &TerminalSurface::bell, this, &MainWindow::handleBell, Qt::UniqueConnection);
-        connect(surface, &TerminalSurface::desktopNotification, this, &MainWindow::handleDesktopNotification, Qt::UniqueConnection);
-    };
-
-    connect(worklane, &WorklaneView::activeSurfaceChanged, this, [this](TerminalSurface* surface) {
-        if (surface && m_sidebar) {
-            m_sidebar->clearAlert(surface);
-            if (m_sidebarVisible) {
-                m_sidebar->scheduleRefresh();
+  connect(worklane, &WorklaneView::titleChanged, this,
+          [this, worklane](const QString &) {
+            int tabIdx = m_stack->indexOf(worklane);
+            if (tabIdx != -1) {
+              updateTabTitleWithSplitCount(tabIdx);
             }
-        }
-    });
-    connect(worklane, &WorklaneView::activeSurfaceChanged, this, wireSurface);
-    if (worklane->activeSurface()) {
-        wireSurface(worklane->activeSurface());
-        worklane->activeSurface()->setFocus();
+          });
+
+  connect(worklane, &WorklaneView::layoutChanged, this, [this, worklane]() {
+    int tabIdx = m_stack->indexOf(worklane);
+    if (tabIdx != -1) {
+      updateTabTitleWithSplitCount(tabIdx);
     }
+  });
 
-    return worklane;
+  connect(worklane, &WorklaneView::empty, this, [this, worklane]() {
+    int tabIdx = m_stack->indexOf(worklane);
+    if (tabIdx != -1) {
+      closeTab(tabIdx);
+    }
+  });
+
+  auto wireSurface = [this](TerminalSurface *surface) {
+    if (!surface)
+      return;
+    connect(surface, &TerminalSurface::gotoTabRequested, this,
+            &MainWindow::gotoTab, Qt::UniqueConnection);
+    connect(surface, &TerminalSurface::nextTabRequested, this,
+            &MainWindow::nextTab, Qt::UniqueConnection);
+    connect(surface, &TerminalSurface::previousTabRequested, this,
+            &MainWindow::prevTab, Qt::UniqueConnection);
+    connect(surface, &TerminalSurface::toggleCommandPaletteRequested, this,
+            &MainWindow::showCommandBar, Qt::UniqueConnection);
+    connect(surface, &TerminalSurface::bell, this, &MainWindow::handleBell,
+            Qt::UniqueConnection);
+    connect(surface, &TerminalSurface::desktopNotification, this,
+            &MainWindow::handleDesktopNotification, Qt::UniqueConnection);
+  };
+
+  connect(worklane, &WorklaneView::activeSurfaceChanged, this,
+          [this](TerminalSurface *surface) {
+            if (surface && m_sidebar) {
+              m_sidebar->clearAlert(surface);
+              if (m_sidebarVisible) {
+                m_sidebar->scheduleRefresh();
+              }
+            }
+          });
+  connect(worklane, &WorklaneView::activeSurfaceChanged, this, wireSurface);
+  if (worklane->activeSurface()) {
+    wireSurface(worklane->activeSurface());
+    worklane->activeSurface()->setFocus();
+  }
+
+  return worklane;
 }
 
-WorklaneView* MainWindow::currentWorklane() const {
-    return qobject_cast<WorklaneView*>(m_stack->currentWidget());
+WorklaneView *MainWindow::currentWorklane() const {
+  return qobject_cast<WorklaneView *>(m_stack->currentWidget());
 }
 
-TerminalSurface* MainWindow::activeSurface() const {
-    auto* wl = currentWorklane();
-    return wl ? wl->activeSurface() : nullptr;
+TerminalSurface *MainWindow::activeSurface() const {
+  auto *wl = currentWorklane();
+  return wl ? wl->activeSurface() : nullptr;
 }
 
 void MainWindow::setupActions() {
-    KActionCollection* ac = actionCollection();
+  KActionCollection *ac = actionCollection();
 
-    // Standard Window & Tab Actions (Matching Ghostty Defaults)
-    auto* newTabAction = new QAction(i18n("New Tab"), this);
-    connect(newTabAction, &QAction::triggered, this, &MainWindow::newTab);
-    ac->addAction(QStringLiteral("new_tab"), newTabAction);
-    ac->setDefaultShortcut(newTabAction, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_T));
+  // Standard Window & Tab Actions (Matching Ghostty Defaults)
+  auto *newTabAction = new QAction(i18n("New Tab"), this);
+  connect(newTabAction, &QAction::triggered, this, &MainWindow::newTab);
+  ac->addAction(QStringLiteral("new_tab"), newTabAction);
+  ac->setDefaultShortcut(newTabAction,
+                         QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_T));
 
-    auto* newWinAction = new QAction(i18n("New Window"), this);
-    connect(newWinAction, &QAction::triggered, this, &MainWindow::newWindow);
-    ac->addAction(QStringLiteral("new_window"), newWinAction);
-    ac->setDefaultShortcut(newWinAction, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_N));
+  auto *newWinAction = new QAction(i18n("New Window"), this);
+  connect(newWinAction, &QAction::triggered, this, &MainWindow::newWindow);
+  ac->addAction(QStringLiteral("new_window"), newWinAction);
+  ac->setDefaultShortcut(newWinAction,
+                         QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_N));
 
-    auto* closeActiveAction = new QAction(i18n("Close Active Terminal"), this);
-    connect(closeActiveAction, &QAction::triggered, this, &MainWindow::closeActive);
-    ac->addAction(QStringLiteral("close_active"), closeActiveAction);
-    ac->setDefaultShortcut(closeActiveAction, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_W));
+  auto *closeActiveAction = new QAction(i18n("Close Active Terminal"), this);
+  connect(closeActiveAction, &QAction::triggered, this,
+          &MainWindow::closeActive);
+  ac->addAction(QStringLiteral("close_active"), closeActiveAction);
+  ac->setDefaultShortcut(closeActiveAction,
+                         QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_W));
 
-    auto* closeTabAction = new QAction(i18n("Close Tab"), this);
-    connect(closeTabAction, &QAction::triggered, this, &MainWindow::closeCurrentTab);
-    ac->addAction(QStringLiteral("close_tab"), closeTabAction);
-    ac->setDefaultShortcut(closeTabAction, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::ALT | Qt::Key_W));
+  auto *closeTabAction = new QAction(i18n("Close Tab"), this);
+  connect(closeTabAction, &QAction::triggered, this,
+          &MainWindow::closeCurrentTab);
+  ac->addAction(QStringLiteral("close_tab"), closeTabAction);
+  ac->setDefaultShortcut(
+      closeTabAction, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::ALT | Qt::Key_W));
 
-    auto* closeWinAction = new QAction(i18n("Close Window"), this);
-    connect(closeWinAction, &QAction::triggered, this, &MainWindow::close);
-    ac->addAction(QStringLiteral("close_window"), closeWinAction);
-    ac->setDefaultShortcut(closeWinAction, QKeySequence(Qt::ALT | Qt::Key_F4));
+  auto *closeWinAction = new QAction(i18n("Close Window"), this);
+  connect(closeWinAction, &QAction::triggered, this, &MainWindow::close);
+  ac->addAction(QStringLiteral("close_window"), closeWinAction);
+  ac->setDefaultShortcut(closeWinAction, QKeySequence(Qt::ALT | Qt::Key_F4));
 
-    auto* quitAction = new QAction(i18n("Quit"), this);
-    connect(quitAction, &QAction::triggered, qApp, &QCoreApplication::quit);
-    ac->addAction(QStringLiteral("file_quit"), quitAction);
-    ac->setDefaultShortcut(quitAction, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Q));
+  auto *quitAction = new QAction(i18n("Quit"), this);
+  connect(quitAction, &QAction::triggered, qApp, &QCoreApplication::quit);
+  ac->addAction(QStringLiteral("file_quit"), quitAction);
+  ac->setDefaultShortcut(quitAction,
+                         QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Q));
 
-    auto* copyAction = KStandardAction::copy(this, &MainWindow::copyText, ac);
-    copyAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C));
-    ac->setDefaultShortcut(copyAction, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C));
+  auto *copyAction = KStandardAction::copy(this, &MainWindow::copyText, ac);
+  copyAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C));
+  ac->setDefaultShortcut(copyAction,
+                         QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C));
 
-    auto* pasteAction = KStandardAction::paste(this, &MainWindow::pasteText, ac);
-    pasteAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_V));
-    ac->setDefaultShortcut(pasteAction, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_V));
+  auto *pasteAction = KStandardAction::paste(this, &MainWindow::pasteText, ac);
+  pasteAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_V));
+  ac->setDefaultShortcut(pasteAction,
+                         QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_V));
 
-    auto* findAction = KStandardAction::find(this, &MainWindow::findText, ac);
-    findAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F));
-    ac->setDefaultShortcut(findAction, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F));
+  auto *findAction = KStandardAction::find(this, &MainWindow::findText, ac);
+  findAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F));
+  ac->setDefaultShortcut(findAction,
+                         QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F));
 
-    auto* clearScrollbackAction = new QAction(i18n("Clear Scrollback"), this);
-    connect(clearScrollbackAction, &QAction::triggered, this, [this]() {
-        TerminalSurface* surface = activeSurface();
-        if (surface && surface->surface()) {
-            ghostty_surface_binding_action(surface->surface(), "clear_screen", 12);
-        }
-    });
-    ac->addAction(QStringLiteral("clear_scrollback"), clearScrollbackAction);
-    clearScrollbackAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_K));
-    ac->setDefaultShortcut(clearScrollbackAction, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_K));
-
-    // View Zoom Actions
-    auto* zoomInAction = KStandardAction::zoomIn(this, &MainWindow::zoomIn, ac);
-    ac->setDefaultShortcuts(zoomInAction, {
-        QKeySequence(Qt::CTRL | Qt::Key_Plus),
-        QKeySequence(Qt::CTRL | Qt::Key_Equal)
-    });
-
-    auto* zoomOutAction = KStandardAction::zoomOut(this, &MainWindow::zoomOut, ac);
-    ac->setDefaultShortcut(zoomOutAction, QKeySequence(Qt::CTRL | Qt::Key_Minus));
-
-    auto* zoomResetAction = new QAction(i18n("Reset Zoom"), this);
-    connect(zoomResetAction, &QAction::triggered, this, &MainWindow::zoomReset);
-    ac->addAction(QStringLiteral("view_zoom_reset"), zoomResetAction);
-    ac->setDefaultShortcut(zoomResetAction, QKeySequence(Qt::CTRL | Qt::Key_0));
-
-    // Tab Navigation (Matching Ghostty Defaults: Ctrl+Shift+Left/Right, Ctrl+PageUp/Down)
-    auto* nextTabAction = new QAction(i18n("Next Tab"), this);
-    connect(nextTabAction, &QAction::triggered, this, &MainWindow::nextTab);
-    ac->addAction(QStringLiteral("next_tab"), nextTabAction);
-    ac->setDefaultShortcuts(nextTabAction, {
-        QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Right),
-        QKeySequence(Qt::CTRL | Qt::Key_PageDown)
-    });
-
-    auto* prevTabAction = new QAction(i18n("Previous Tab"), this);
-    connect(prevTabAction, &QAction::triggered, this, &MainWindow::prevTab);
-    ac->addAction(QStringLiteral("prev_tab"), prevTabAction);
-    ac->setDefaultShortcuts(prevTabAction, {
-        QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Left),
-        QKeySequence(Qt::CTRL | Qt::Key_PageUp)
-    });
-
-    // Tab Selection Alt+1..8, Alt+9 for last tab
-    m_tabSwitchActions.clear();
-    for (int i = 1; i <= 8; ++i) {
-        auto* gotoTabAction = new QAction(i18n("Go to Tab %1", i), this);
-        connect(gotoTabAction, &QAction::triggered, this, [this, i]() {
-            if (i <= m_tabBar->count()) {
-                m_tabBar->setCurrentIndex(i - 1);
-            }
-        });
-        ac->addAction(QStringLiteral("goto_tab_%1").arg(i), gotoTabAction);
-        ac->setDefaultShortcut(gotoTabAction, QKeySequence(Qt::ALT | (Qt::Key_0 + i)));
-        m_tabSwitchActions.append(gotoTabAction);
+  auto *clearScrollbackAction = new QAction(i18n("Clear Scrollback"), this);
+  connect(clearScrollbackAction, &QAction::triggered, this, [this]() {
+    TerminalSurface *surface = activeSurface();
+    if (surface && surface->surface()) {
+      ghostty_surface_binding_action(surface->surface(), "clear_screen", 12);
     }
+  });
+  ac->addAction(QStringLiteral("clear_scrollback"), clearScrollbackAction);
+  clearScrollbackAction->setShortcut(
+      QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_K));
+  ac->setDefaultShortcut(clearScrollbackAction,
+                         QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_K));
 
-    auto* gotoLastTabAction = new QAction(i18n("Go to Last Tab"), this);
-    connect(gotoLastTabAction, &QAction::triggered, this, [this]() {
-        if (m_tabBar->count() > 0) {
-            m_tabBar->setCurrentIndex(m_tabBar->count() - 1);
-        }
+  // View Zoom Actions
+  auto *zoomInAction = KStandardAction::zoomIn(this, &MainWindow::zoomIn, ac);
+  ac->setDefaultShortcuts(zoomInAction,
+                          {QKeySequence(Qt::CTRL | Qt::Key_Plus),
+                           QKeySequence(Qt::CTRL | Qt::Key_Equal)});
+
+  auto *zoomOutAction =
+      KStandardAction::zoomOut(this, &MainWindow::zoomOut, ac);
+  ac->setDefaultShortcut(zoomOutAction, QKeySequence(Qt::CTRL | Qt::Key_Minus));
+
+  auto *zoomResetAction = new QAction(i18n("Reset Zoom"), this);
+  connect(zoomResetAction, &QAction::triggered, this, &MainWindow::zoomReset);
+  ac->addAction(QStringLiteral("view_zoom_reset"), zoomResetAction);
+  ac->setDefaultShortcut(zoomResetAction, QKeySequence(Qt::CTRL | Qt::Key_0));
+
+  // Tab Navigation (Matching Ghostty Defaults: Ctrl+Shift+Left/Right,
+  // Ctrl+PageUp/Down)
+  auto *nextTabAction = new QAction(i18n("Next Tab"), this);
+  connect(nextTabAction, &QAction::triggered, this, &MainWindow::nextTab);
+  ac->addAction(QStringLiteral("next_tab"), nextTabAction);
+  ac->setDefaultShortcuts(nextTabAction,
+                          {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Right),
+                           QKeySequence(Qt::CTRL | Qt::Key_PageDown)});
+
+  auto *prevTabAction = new QAction(i18n("Previous Tab"), this);
+  connect(prevTabAction, &QAction::triggered, this, &MainWindow::prevTab);
+  ac->addAction(QStringLiteral("prev_tab"), prevTabAction);
+  ac->setDefaultShortcuts(prevTabAction,
+                          {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Left),
+                           QKeySequence(Qt::CTRL | Qt::Key_PageUp)});
+
+  // Tab Selection Alt+1..8, Alt+9 for last tab
+  m_tabSwitchActions.clear();
+  for (int i = 1; i <= 8; ++i) {
+    auto *gotoTabAction = new QAction(i18n("Go to Tab %1", i), this);
+    connect(gotoTabAction, &QAction::triggered, this, [this, i]() {
+      if (i <= m_tabBar->count()) {
+        m_tabBar->setCurrentIndex(i - 1);
+      }
     });
-    ac->addAction(QStringLiteral("goto_tab_last"), gotoLastTabAction);
-    ac->setDefaultShortcut(gotoLastTabAction, QKeySequence(Qt::ALT | Qt::Key_9));
-    m_tabSwitchActions.append(gotoLastTabAction);
+    ac->addAction(QStringLiteral("goto_tab_%1").arg(i), gotoTabAction);
+    ac->setDefaultShortcut(gotoTabAction,
+                           QKeySequence(Qt::ALT | (Qt::Key_0 + i)));
+    m_tabSwitchActions.append(gotoTabAction);
+  }
 
-    // Command Bar
-    auto* cmdBarAction = actionCollection()->action(QStringLiteral("open_kcommand_bar"));
-    if (!cmdBarAction) {
-        cmdBarAction = new QAction(i18n("Open Command Bar"), this);
-        connect(cmdBarAction, &QAction::triggered, this, &MainWindow::showCommandBar);
-        ac->addAction(QStringLiteral("open_kcommand_bar"), cmdBarAction);
+  auto *gotoLastTabAction = new QAction(i18n("Go to Last Tab"), this);
+  connect(gotoLastTabAction, &QAction::triggered, this, [this]() {
+    if (m_tabBar->count() > 0) {
+      m_tabBar->setCurrentIndex(m_tabBar->count() - 1);
     }
-    cmdBarAction->setShortcuts({
-        QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_P),
-        QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_I)
-    });
-    ac->setDefaultShortcuts(cmdBarAction, {
-        QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_P),
-        QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_I)
-    });
-    addAction(cmdBarAction);
+  });
+  ac->addAction(QStringLiteral("goto_tab_last"), gotoLastTabAction);
+  ac->setDefaultShortcut(gotoLastTabAction, QKeySequence(Qt::ALT | Qt::Key_9));
+  m_tabSwitchActions.append(gotoLastTabAction);
 
-    // Sidebar Toggle Action (Ctrl+Shift+B)
-    m_toggleSidebarAction = new QAction(i18n("Toggle Worklane Sidebar"), this);
-    m_toggleSidebarAction->setCheckable(true);
-    m_toggleSidebarAction->setChecked(m_sidebarVisible);
-    connect(m_toggleSidebarAction, &QAction::triggered, this, &MainWindow::toggleSidebar);
-    ac->addAction(QStringLiteral("toggle_sidebar"), m_toggleSidebarAction);
-    ac->setDefaultShortcut(m_toggleSidebarAction, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_B));
+  // Command Bar
+  auto *cmdBarAction =
+      actionCollection()->action(QStringLiteral("open_kcommand_bar"));
+  if (!cmdBarAction) {
+    cmdBarAction = new QAction(i18n("Open Command Bar"), this);
+    connect(cmdBarAction, &QAction::triggered, this,
+            &MainWindow::showCommandBar);
+    ac->addAction(QStringLiteral("open_kcommand_bar"), cmdBarAction);
+  }
+  cmdBarAction->setShortcuts({QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_P),
+                              QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_I)});
+  ac->setDefaultShortcuts(cmdBarAction,
+                          {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_P),
+                           QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_I)});
+  addAction(cmdBarAction);
 
-    // Worklane Split Actions (Matching Ghostty Defaults: Ctrl+Shift+O Right, Ctrl+Shift+E Down)
-    auto* newColAction = new QAction(i18n("Split Right"), this);
-    connect(newColAction, &QAction::triggered, this, &MainWindow::newColumn);
-    ac->addAction(QStringLiteral("new_split_right"), newColAction);
-    ac->setDefaultShortcut(newColAction, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
+  // Sidebar Toggle Action (Ctrl+Shift+B)
+  m_toggleSidebarAction = new QAction(i18n("Toggle Worklane Sidebar"), this);
+  m_toggleSidebarAction->setCheckable(true);
+  m_toggleSidebarAction->setChecked(m_sidebarVisible);
+  connect(m_toggleSidebarAction, &QAction::triggered, this,
+          &MainWindow::toggleSidebar);
+  ac->addAction(QStringLiteral("toggle_sidebar"), m_toggleSidebarAction);
+  ac->setDefaultShortcut(m_toggleSidebarAction,
+                         QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_B));
 
-    auto* splitVertAction = new QAction(i18n("Split Down"), this);
-    connect(splitVertAction, &QAction::triggered, this, &MainWindow::splitVertical);
-    ac->addAction(QStringLiteral("new_split_down"), splitVertAction);
-    ac->setDefaultShortcut(splitVertAction, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_E));
+  // Worklane Split Actions (Matching Ghostty Defaults: Ctrl+Shift+O Right,
+  // Ctrl+Shift+E Down)
+  auto *newColAction = new QAction(i18n("Split Right"), this);
+  connect(newColAction, &QAction::triggered, this, &MainWindow::newColumn);
+  ac->addAction(QStringLiteral("new_split_right"), newColAction);
+  ac->setDefaultShortcut(newColAction,
+                         QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
 
-    // Split Zoom & Equalize (Matching Ghostty: Ctrl+Shift+Enter Zoom, Ctrl+Alt+= Equalize)
-    auto* zoomSplitAction = new QAction(i18n("Toggle Split Zoom"), this);
-    connect(zoomSplitAction, &QAction::triggered, this, &MainWindow::toggleSplitZoom);
-    ac->addAction(QStringLiteral("toggle_split_zoom"), zoomSplitAction);
-    ac->setDefaultShortcut(zoomSplitAction, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Return));
+  auto *splitVertAction = new QAction(i18n("Split Down"), this);
+  connect(splitVertAction, &QAction::triggered, this,
+          &MainWindow::splitVertical);
+  ac->addAction(QStringLiteral("new_split_down"), splitVertAction);
+  ac->setDefaultShortcut(splitVertAction,
+                         QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_E));
 
-    auto* eqSplitAction = new QAction(i18n("Equalize Splits"), this);
-    connect(eqSplitAction, &QAction::triggered, this, &MainWindow::equalizeSplits);
-    ac->addAction(QStringLiteral("equalize_splits"), eqSplitAction);
-    ac->setDefaultShortcut(eqSplitAction, QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_Equal));
+  // Split Zoom & Equalize (Matching Ghostty: Ctrl+Shift+Enter Zoom, Ctrl+Alt+=
+  // Equalize)
+  auto *zoomSplitAction = new QAction(i18n("Toggle Split Zoom"), this);
+  connect(zoomSplitAction, &QAction::triggered, this,
+          &MainWindow::toggleSplitZoom);
+  ac->addAction(QStringLiteral("toggle_split_zoom"), zoomSplitAction);
+  ac->setDefaultShortcut(zoomSplitAction,
+                         QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Return));
 
-    // Split Navigation (Matching Ghostty Defaults: Ctrl+Alt+Arrow keys)
-    auto* focusLeftAction = new QAction(i18n("Focus Left Split"), this);
-    connect(focusLeftAction, &QAction::triggered, this, [this]() {
-        if (auto* wl = currentWorklane()) wl->focusLeftColumn();
-    });
-    ac->addAction(QStringLiteral("focus_prev_column"), focusLeftAction);
-    ac->setDefaultShortcut(focusLeftAction, QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_Left));
+  auto *eqSplitAction = new QAction(i18n("Equalize Splits"), this);
+  connect(eqSplitAction, &QAction::triggered, this,
+          &MainWindow::equalizeSplits);
+  ac->addAction(QStringLiteral("equalize_splits"), eqSplitAction);
+  ac->setDefaultShortcut(eqSplitAction,
+                         QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_Equal));
 
-    auto* focusRightAction = new QAction(i18n("Focus Right Split"), this);
-    connect(focusRightAction, &QAction::triggered, this, [this]() {
-        if (auto* wl = currentWorklane()) wl->focusRightColumn();
-    });
-    ac->addAction(QStringLiteral("focus_next_column"), focusRightAction);
-    ac->setDefaultShortcut(focusRightAction, QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_Right));
+  // Split Navigation (Matching Ghostty Defaults: Ctrl+Alt+Arrow keys)
+  auto *focusLeftAction = new QAction(i18n("Focus Left Split"), this);
+  connect(focusLeftAction, &QAction::triggered, this, [this]() {
+    if (auto *wl = currentWorklane())
+      wl->focusLeftColumn();
+  });
+  ac->addAction(QStringLiteral("focus_prev_column"), focusLeftAction);
+  ac->setDefaultShortcut(focusLeftAction,
+                         QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_Left));
 
-    auto* focusUpAction = new QAction(i18n("Focus Up Split"), this);
-    connect(focusUpAction, &QAction::triggered, this, [this]() {
-        if (auto* wl = currentWorklane()) wl->focusUpSplit();
-    });
-    ac->addAction(QStringLiteral("focus_up"), focusUpAction);
-    ac->setDefaultShortcut(focusUpAction, QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_Up));
+  auto *focusRightAction = new QAction(i18n("Focus Right Split"), this);
+  connect(focusRightAction, &QAction::triggered, this, [this]() {
+    if (auto *wl = currentWorklane())
+      wl->focusRightColumn();
+  });
+  ac->addAction(QStringLiteral("focus_next_column"), focusRightAction);
+  ac->setDefaultShortcut(focusRightAction,
+                         QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_Right));
 
-    auto* focusDownAction = new QAction(i18n("Focus Down Split"), this);
-    connect(focusDownAction, &QAction::triggered, this, [this]() {
-        if (auto* wl = currentWorklane()) wl->focusDownSplit();
-    });
-    ac->addAction(QStringLiteral("focus_down"), focusDownAction);
-    ac->setDefaultShortcut(focusDownAction, QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_Down));
+  auto *focusUpAction = new QAction(i18n("Focus Up Split"), this);
+  connect(focusUpAction, &QAction::triggered, this, [this]() {
+    if (auto *wl = currentWorklane())
+      wl->focusUpSplit();
+  });
+  ac->addAction(QStringLiteral("focus_up"), focusUpAction);
+  ac->setDefaultShortcut(focusUpAction,
+                         QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_Up));
 
-    // Settings
-    KStandardAction::preferences(this, &MainWindow::showPreferencesDialog, ac);
-    KStandardAction::keyBindings(guiFactory(), &KXMLGUIFactory::showConfigureShortcutsDialog, ac);
+  auto *focusDownAction = new QAction(i18n("Focus Down Split"), this);
+  connect(focusDownAction, &QAction::triggered, this, [this]() {
+    if (auto *wl = currentWorklane())
+      wl->focusDownSplit();
+  });
+  ac->addAction(QStringLiteral("focus_down"), focusDownAction);
+  ac->setDefaultShortcut(focusDownAction,
+                         QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_Down));
+
+  // Settings
+  KStandardAction::preferences(this, &MainWindow::showPreferencesDialog, ac);
+  KStandardAction::keyBindings(
+      guiFactory(), &KXMLGUIFactory::showConfigureShortcutsDialog, ac);
 }
 
 void MainWindow::newWindow() {
-    auto* win = new MainWindow();
-    win->show();
+  auto *win = new MainWindow();
+  win->show();
 }
 
 void MainWindow::newTab() {
-    QString initialDir;
-    KConfigGroup genCfg(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("General"));
-    bool inherit = genCfg.readEntry("NewTabInheritsPwd", false);
-    if (inherit) {
-        auto* curWl = currentWorklane();
-        if (curWl && curWl->activeSurface()) {
-            initialDir = curWl->activeSurface()->currentWorkingDirectory();
-        }
+  QString initialDir;
+  KConfigGroup genCfg(KSharedConfig::openConfig(QStringLiteral("khosttyrc")),
+                      QStringLiteral("General"));
+  bool inherit = genCfg.readEntry("NewTabInheritsPwd", false);
+  if (inherit) {
+    auto *curWl = currentWorklane();
+    if (curWl && curWl->activeSurface()) {
+      initialDir = curWl->activeSurface()->currentWorkingDirectory();
     }
-    if (initialDir.isEmpty()) {
-        initialDir = QDir::homePath();
-    }
-    createTab(QString(), initialDir);
+  }
+  if (initialDir.isEmpty()) {
+    initialDir = QDir::homePath();
+  }
+  createTab(QString(), initialDir);
 }
 
-void MainWindow::closeCurrentTab() {
-    closeTab(m_tabBar->currentIndex());
-}
+void MainWindow::closeCurrentTab() { closeTab(m_tabBar->currentIndex()); }
 
 void MainWindow::closeTab(int index) {
-    if (index < 0 || index >= m_stack->count()) {
-        return;
-    }
+  if (index < 0 || index >= m_stack->count()) {
+    return;
+  }
 
-    QWidget* page = m_stack->widget(index);
-    m_stack->removeWidget(page);
-    m_tabBar->removeTab(index);
-    updateTabBarVisibility();
-    page->deleteLater();
+  QWidget *page = m_stack->widget(index);
+  m_stack->removeWidget(page);
+  m_tabBar->removeTab(index);
+  updateTabBarVisibility();
+  page->deleteLater();
 
-    if (m_sidebar && m_sidebarVisible) {
-        m_sidebar->refreshTree();
-    }
+  if (m_sidebar && m_sidebarVisible) {
+    m_sidebar->refreshTree();
+  }
 
-    if (m_tabBar->count() == 0) {
-        close();
-    } else {
-        auto* wl = currentWorklane();
-        if (wl && wl->activeSurface()) {
-            wl->activeSurface()->setFocus();
-            updateTitle(wl->activeTitle());
-        }
+  if (m_tabBar->count() == 0) {
+    close();
+  } else {
+    auto *wl = currentWorklane();
+    if (wl && wl->activeSurface()) {
+      wl->activeSurface()->setFocus();
+      updateTitle(wl->activeTitle());
     }
+  }
 }
 
 void MainWindow::gotoTab(int tabIdx) {
-    if (tabIdx >= 1 && tabIdx <= m_tabBar->count()) {
-        m_tabBar->setCurrentIndex(tabIdx - 1);
-    }
+  if (tabIdx >= 1 && tabIdx <= m_tabBar->count()) {
+    m_tabBar->setCurrentIndex(tabIdx - 1);
+  }
 }
 
 void MainWindow::nextTab() {
-    if (m_tabBar->count() > 1) {
-        int next = (m_tabBar->currentIndex() + 1) % m_tabBar->count();
-        m_tabBar->setCurrentIndex(next);
-    }
+  if (m_tabBar->count() > 1) {
+    int next = (m_tabBar->currentIndex() + 1) % m_tabBar->count();
+    m_tabBar->setCurrentIndex(next);
+  }
 }
 
 void MainWindow::prevTab() {
-    if (m_tabBar->count() > 1) {
-        int prev = (m_tabBar->currentIndex() - 1 + m_tabBar->count()) % m_tabBar->count();
-        m_tabBar->setCurrentIndex(prev);
-    }
+  if (m_tabBar->count() > 1) {
+    int prev =
+        (m_tabBar->currentIndex() - 1 + m_tabBar->count()) % m_tabBar->count();
+    m_tabBar->setCurrentIndex(prev);
+  }
 }
 
 void MainWindow::onTabChanged(int index) {
-    if (index >= 0 && index < m_stack->count()) {
-        auto* wl = qobject_cast<WorklaneView*>(m_stack->widget(index));
-        if (wl) {
-            if (wl->activeSurface()) {
-                wl->activeSurface()->setFocus();
-                if (m_sidebar) {
-                    m_sidebar->clearAlert(wl->activeSurface());
-                }
-            }
-            updateTitle(wl->activeTitle());
+  if (index >= 0 && index < m_stack->count()) {
+    auto *wl = qobject_cast<WorklaneView *>(m_stack->widget(index));
+    if (wl) {
+      if (wl->activeSurface()) {
+        wl->activeSurface()->setFocus();
+        if (m_sidebar) {
+          m_sidebar->clearAlert(wl->activeSurface());
         }
+      }
+      updateTitle(wl->activeTitle());
     }
-    if (m_sidebar && m_sidebarVisible) {
-        m_sidebar->refreshTree();
-    }
+  }
+  if (m_sidebar && m_sidebarVisible) {
+    m_sidebar->refreshTree();
+  }
 }
 
 void MainWindow::newColumn() {
-    auto* wl = currentWorklane();
-    if (wl) {
-        wl->addColumn();
-    }
+  auto *wl = currentWorklane();
+  if (wl) {
+    wl->addColumn();
+  }
 }
 
 void MainWindow::splitVertical() {
-    auto* wl = currentWorklane();
-    if (wl) {
-        wl->splitCurrentVertical();
-    }
+  auto *wl = currentWorklane();
+  if (wl) {
+    wl->splitCurrentVertical();
+  }
 }
 
 void MainWindow::closeActive() {
-    auto* wl = currentWorklane();
-    if (!wl) return;
-    auto* s = wl->activeSurface();
-    if (s && s->surface() && ghostty_surface_needs_confirm_quit(s->surface())) {
-        auto res = KMessageBox::warningContinueCancel(
-            this,
-            i18n("A process is running in this terminal. Closing it may terminate the process. Do you want to continue?"),
-            i18n("Confirm Close"),
-            KStandardGuiItem::close()
-        );
-        if (res != KMessageBox::Continue) {
-            return;
-        }
+  auto *wl = currentWorklane();
+  if (!wl)
+    return;
+  auto *s = wl->activeSurface();
+  if (s && s->surface() && ghostty_surface_needs_confirm_quit(s->surface())) {
+    auto res = KMessageBox::warningContinueCancel(
+        this,
+        i18n("A process is running in this terminal. Closing it may terminate "
+             "the process. Do you want to continue?"),
+        i18n("Confirm Close"), KStandardGuiItem::close());
+    if (res != KMessageBox::Continue) {
+      return;
     }
-    wl->closeActiveSurface();
+  }
+  wl->closeActiveSurface();
 }
 
 void MainWindow::findText() {
-    if (auto* wl = currentWorklane()) {
-        wl->toggleSearchBar();
-    }
+  if (auto *wl = currentWorklane()) {
+    wl->toggleSearchBar();
+  }
 }
 
 void MainWindow::zoomIn() {
-    TerminalSurface* surface = activeSurface();
-    if (surface && surface->surface()) {
-        ghostty_surface_binding_action(surface->surface(), "increase_font_size:1", 19);
-    }
+  TerminalSurface *surface = activeSurface();
+  if (surface && surface->surface()) {
+    ghostty_surface_binding_action(surface->surface(), "increase_font_size:1",
+                                   19);
+  }
 }
 
 void MainWindow::zoomOut() {
-    TerminalSurface* surface = activeSurface();
-    if (surface && surface->surface()) {
-        ghostty_surface_binding_action(surface->surface(), "decrease_font_size:1", 19);
-    }
+  TerminalSurface *surface = activeSurface();
+  if (surface && surface->surface()) {
+    ghostty_surface_binding_action(surface->surface(), "decrease_font_size:1",
+                                   19);
+  }
 }
 
 void MainWindow::zoomReset() {
-    TerminalSurface* surface = activeSurface();
-    if (surface && surface->surface()) {
-        ghostty_surface_binding_action(surface->surface(), "reset_font_size", 15);
-    }
+  TerminalSurface *surface = activeSurface();
+  if (surface && surface->surface()) {
+    ghostty_surface_binding_action(surface->surface(), "reset_font_size", 15);
+  }
 }
 
 void MainWindow::toggleSplitZoom() {
-    auto* wl = currentWorklane();
-    if (wl) {
-        wl->toggleSplitZoom();
-    }
+  auto *wl = currentWorklane();
+  if (wl) {
+    wl->toggleSplitZoom();
+  }
 }
 
 void MainWindow::equalizeSplits() {
-    auto* wl = currentWorklane();
-    if (wl) {
-        wl->equalizeSplits();
-    }
+  auto *wl = currentWorklane();
+  if (wl) {
+    wl->equalizeSplits();
+  }
 }
 
 void MainWindow::copyText() {
-    TerminalSurface* surface = activeSurface();
-    if (!surface || !surface->surface()) return;
+  TerminalSurface *surface = activeSurface();
+  if (!surface || !surface->surface())
+    return;
 
-    ghostty_text_s text = {};
-    if (ghostty_surface_read_selection(surface->surface(), &text)) {
-        if (text.text && text.text_len > 0) {
-            QString selected = QString::fromUtf8(text.text, static_cast<qsizetype>(text.text_len));
-            QGuiApplication::clipboard()->setText(selected, QClipboard::Clipboard);
-        }
-        ghostty_surface_free_text(surface->surface(), &text);
+  ghostty_text_s text = {};
+  if (ghostty_surface_read_selection(surface->surface(), &text)) {
+    if (text.text && text.text_len > 0) {
+      QString selected =
+          QString::fromUtf8(text.text, static_cast<qsizetype>(text.text_len));
+      QGuiApplication::clipboard()->setText(selected, QClipboard::Clipboard);
     }
+    ghostty_surface_free_text(surface->surface(), &text);
+  }
 }
 
 void MainWindow::pasteText() {
-    TerminalSurface* surface = activeSurface();
-    if (!surface) return;
+  TerminalSurface *surface = activeSurface();
+  if (!surface)
+    return;
 
-    QString text = QGuiApplication::clipboard()->text(QClipboard::Clipboard);
-    if (!text.isEmpty()) {
-        surface->pasteText(text);
-    }
+  QString text = QGuiApplication::clipboard()->text(QClipboard::Clipboard);
+  if (!text.isEmpty()) {
+    surface->pasteText(text);
+  }
 }
 
 void MainWindow::showPreferencesDialog() {
-    QDialog dialog(this);
-    dialog.setWindowTitle(i18n("Configure — Khostty"));
-    dialog.setMinimumWidth(440);
+  QDialog dialog(this);
+  dialog.setWindowTitle(i18n("Configure — Khostty"));
+  dialog.setMinimumWidth(440);
 
-    auto* layout = new QVBoxLayout(&dialog);
+  auto *layout = new QVBoxLayout(&dialog);
 
-    // Appearance & Layout Settings
-    auto* appearanceGroup = new QGroupBox(i18n("Appearance & Layout"), &dialog);
-    auto* appearanceLayout = new QVBoxLayout(appearanceGroup);
+  // Appearance & Layout Settings
+  auto *appearanceGroup = new QGroupBox(i18n("Appearance & Layout"), &dialog);
+  auto *appearanceLayout = new QVBoxLayout(appearanceGroup);
 
-    KConfigGroup appCfg(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("Appearance"));
-    bool showHeaderOnlyOnSplit = appCfg.readEntry("ShowHeaderOnlyOnSplit", true);
-    bool showWorklaneScrollbar = appCfg.readEntry("ShowWorklaneScrollbar", false);
+  KConfigGroup appCfg(KSharedConfig::openConfig(QStringLiteral("khosttyrc")),
+                      QStringLiteral("Appearance"));
+  bool showHeaderOnlyOnSplit = appCfg.readEntry("ShowHeaderOnlyOnSplit", true);
+  bool showWorklaneScrollbar = appCfg.readEntry("ShowWorklaneScrollbar", false);
 
-    auto* hideSingleHeaderCheck = new QCheckBox(
-        i18n("Hide pane header when only one terminal is open"),
-        appearanceGroup
-    );
-    hideSingleHeaderCheck->setChecked(showHeaderOnlyOnSplit);
-    appearanceLayout->addWidget(hideSingleHeaderCheck);
+  auto *hideSingleHeaderCheck = new QCheckBox(
+      i18n("Hide pane header when only one terminal is open"), appearanceGroup);
+  hideSingleHeaderCheck->setChecked(showHeaderOnlyOnSplit);
+  appearanceLayout->addWidget(hideSingleHeaderCheck);
 
-    auto* showScrollbarCheck = new QCheckBox(
-        i18n("Show horizontal scrollbar on worklane canvas when overflowed"),
-        appearanceGroup
-    );
-    showScrollbarCheck->setChecked(showWorklaneScrollbar);
-    appearanceLayout->addWidget(showScrollbarCheck);
+  auto *showScrollbarCheck = new QCheckBox(
+      i18n("Show horizontal scrollbar on worklane canvas when overflowed"),
+      appearanceGroup);
+  showScrollbarCheck->setChecked(showWorklaneScrollbar);
+  appearanceLayout->addWidget(showScrollbarCheck);
 
-    // Sidebar Accent Color Override
-    QString customAccentStr = appCfg.readEntry("CustomAccentColor", QString());
-    bool useCustomAccent = !customAccentStr.isEmpty();
-    QColor initialAccent = useCustomAccent ? QColor(customAccentStr) : (m_sidebar ? m_sidebar->accentColor() : palette().color(QPalette::Highlight));
+  // Sidebar Accent Color Override
+  QString customAccentStr = appCfg.readEntry("CustomAccentColor", QString());
+  bool useCustomAccent = !customAccentStr.isEmpty();
+  QColor initialAccent =
+      useCustomAccent ? QColor(customAccentStr)
+                      : (m_sidebar ? m_sidebar->accentColor()
+                                   : palette().color(QPalette::Highlight));
 
-    auto* accentLayout = new QHBoxLayout();
-    auto* customAccentCheck = new QCheckBox(i18n("Override sidebar accent color:"), appearanceGroup);
-    customAccentCheck->setChecked(useCustomAccent);
+  auto *accentLayout = new QHBoxLayout();
+  auto *customAccentCheck =
+      new QCheckBox(i18n("Override sidebar accent color:"), appearanceGroup);
+  customAccentCheck->setChecked(useCustomAccent);
 
-    auto* colorBtn = new KColorButton(initialAccent, appearanceGroup);
-    colorBtn->setEnabled(useCustomAccent);
-    colorBtn->setDefaultColor(m_sidebar ? m_sidebar->accentColor() : palette().color(QPalette::Highlight));
+  auto *colorBtn = new KColorButton(initialAccent, appearanceGroup);
+  colorBtn->setEnabled(useCustomAccent);
+  colorBtn->setDefaultColor(m_sidebar ? m_sidebar->accentColor()
+                                      : palette().color(QPalette::Highlight));
 
-    connect(customAccentCheck, &QCheckBox::toggled, colorBtn, &QWidget::setEnabled);
+  connect(customAccentCheck, &QCheckBox::toggled, colorBtn,
+          &QWidget::setEnabled);
 
-    accentLayout->addWidget(customAccentCheck);
-    accentLayout->addWidget(colorBtn);
-    accentLayout->addStretch();
-    appearanceLayout->addLayout(accentLayout);
+  accentLayout->addWidget(customAccentCheck);
+  accentLayout->addWidget(colorBtn);
+  accentLayout->addStretch();
+  appearanceLayout->addLayout(accentLayout);
 
-    layout->addWidget(appearanceGroup);
+  layout->addWidget(appearanceGroup);
 
-    // Working Directory (CWD) Settings
-    auto* cwdGroup = new QGroupBox(i18n("Working Directory"), &dialog);
-    auto* cwdLayout = new QVBoxLayout(cwdGroup);
+  // Working Directory (CWD) Settings
+  auto *cwdGroup = new QGroupBox(i18n("Working Directory"), &dialog);
+  auto *cwdLayout = new QVBoxLayout(cwdGroup);
 
-    KConfigGroup genCfg(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("General"));
-    bool newTabInherit = genCfg.readEntry("NewTabInheritsPwd", false);
-    bool newSplitInherit = genCfg.readEntry("NewSplitInheritsPwd", true);
+  KConfigGroup genCfg(KSharedConfig::openConfig(QStringLiteral("khosttyrc")),
+                      QStringLiteral("General"));
+  bool newTabInherit = genCfg.readEntry("NewTabInheritsPwd", false);
+  bool newSplitInherit = genCfg.readEntry("NewSplitInheritsPwd", true);
 
-    auto* newTabInheritCheck = new QCheckBox(
-        i18n("New tabs inherit working directory from active terminal"),
-        cwdGroup
-    );
-    newTabInheritCheck->setChecked(newTabInherit);
-    newTabInheritCheck->setToolTip(i18n("When unchecked, new tabs start in your home directory ($HOME)."));
-    cwdLayout->addWidget(newTabInheritCheck);
+  auto *newTabInheritCheck = new QCheckBox(
+      i18n("New tabs inherit working directory from active terminal"),
+      cwdGroup);
+  newTabInheritCheck->setChecked(newTabInherit);
+  newTabInheritCheck->setToolTip(
+      i18n("When unchecked, new tabs start in your home directory ($HOME)."));
+  cwdLayout->addWidget(newTabInheritCheck);
 
-    auto* newSplitInheritCheck = new QCheckBox(
-        i18n("New splits inherit working directory from active terminal"),
-        cwdGroup
-    );
-    newSplitInheritCheck->setChecked(newSplitInherit);
-    newSplitInheritCheck->setToolTip(i18n("When unchecked, new splits start in your home directory ($HOME)."));
-    cwdLayout->addWidget(newSplitInheritCheck);
+  auto *newSplitInheritCheck = new QCheckBox(
+      i18n("New splits inherit working directory from active terminal"),
+      cwdGroup);
+  newSplitInheritCheck->setChecked(newSplitInherit);
+  newSplitInheritCheck->setToolTip(
+      i18n("When unchecked, new splits start in your home directory ($HOME)."));
+  cwdLayout->addWidget(newSplitInheritCheck);
 
-    layout->addWidget(cwdGroup);
+  layout->addWidget(cwdGroup);
 
-    // Font Settings
-    auto* fontGroup = new QGroupBox(i18n("Font Settings"), &dialog);
-    auto* fontLayout = new QVBoxLayout(fontGroup);
+  // Font Settings
+  auto *fontGroup = new QGroupBox(i18n("Font Settings"), &dialog);
+  auto *fontLayout = new QVBoxLayout(fontGroup);
 
-    QFont sysFixed = QFontDatabase::systemFont(QFontDatabase::FixedFont);
-    float sysPt = static_cast<float>(sysFixed.pointSizeF());
-    if (sysPt <= 0.0f) sysPt = static_cast<float>(sysFixed.pointSize());
-    if (sysPt <= 0.0f) sysPt = 10.0f;
+  QFont sysFixed = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+  float sysPt = static_cast<float>(sysFixed.pointSizeF());
+  if (sysPt <= 0.0f)
+    sysPt = static_cast<float>(sysFixed.pointSize());
+  if (sysPt <= 0.0f)
+    sysPt = 10.0f;
 
-    KConfigGroup fontCfg(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("Font"));
-    bool useSys = fontCfg.readEntry("UseSystemFixedFont", true);
-    float currentCustom = fontCfg.readEntry("FontSize", 0.0f);
-    if (currentCustom <= 0.0f) currentCustom = sysPt;
+  KConfigGroup fontCfg(KSharedConfig::openConfig(QStringLiteral("khosttyrc")),
+                       QStringLiteral("Font"));
+  bool useSys = fontCfg.readEntry("UseSystemFixedFont", true);
+  float currentCustom = fontCfg.readEntry("FontSize", 0.0f);
+  if (currentCustom <= 0.0f)
+    currentCustom = sysPt;
 
-    auto* useSysCheck = new QCheckBox(
-        i18n("Use KDE system fixed font (%1, %2 pt)", sysFixed.family(), sysPt),
-        fontGroup
-    );
-    useSysCheck->setChecked(useSys);
-    fontLayout->addWidget(useSysCheck);
+  auto *useSysCheck = new QCheckBox(
+      i18n("Use KDE system fixed font (%1, %2 pt)", sysFixed.family(), sysPt),
+      fontGroup);
+  useSysCheck->setChecked(useSys);
+  fontLayout->addWidget(useSysCheck);
 
-    auto* customSizeLayout = new QHBoxLayout();
-    auto* customSizeLabel = new QLabel(i18n("Custom font size (pt):"), fontGroup);
-    auto* customSizeSpin = new QDoubleSpinBox(fontGroup);
-    customSizeSpin->setRange(6.0, 72.0);
-    customSizeSpin->setSingleStep(0.5);
-    customSizeSpin->setValue(currentCustom);
-    customSizeSpin->setEnabled(!useSys);
+  auto *customSizeLayout = new QHBoxLayout();
+  auto *customSizeLabel = new QLabel(i18n("Custom font size (pt):"), fontGroup);
+  auto *customSizeSpin = new QDoubleSpinBox(fontGroup);
+  customSizeSpin->setRange(6.0, 72.0);
+  customSizeSpin->setSingleStep(0.5);
+  customSizeSpin->setValue(currentCustom);
+  customSizeSpin->setEnabled(!useSys);
 
-    customSizeLayout->addWidget(customSizeLabel);
-    customSizeLayout->addWidget(customSizeSpin);
-    fontLayout->addLayout(customSizeLayout);
+  customSizeLayout->addWidget(customSizeLabel);
+  customSizeLayout->addWidget(customSizeSpin);
+  fontLayout->addLayout(customSizeLayout);
 
-    connect(useSysCheck, &QCheckBox::toggled, customSizeSpin, [customSizeSpin](bool checked) {
-        customSizeSpin->setEnabled(!checked);
-    });
+  connect(
+      useSysCheck, &QCheckBox::toggled, customSizeSpin,
+      [customSizeSpin](bool checked) { customSizeSpin->setEnabled(!checked); });
 
-    layout->addWidget(fontGroup);
+  layout->addWidget(fontGroup);
 
-    // Ghostty Terminal Engine (Power Users)
-    auto* engineGroup = new QGroupBox(i18n("Ghostty Terminal Engine"), &dialog);
-    auto* engineLayout = new QVBoxLayout(engineGroup);
+  // Ghostty Terminal Engine (Power Users)
+  auto *engineGroup = new QGroupBox(i18n("Ghostty Terminal Engine"), &dialog);
+  auto *engineLayout = new QVBoxLayout(engineGroup);
 
-    auto* engineDescLabel = new QLabel(
-        i18n("Terminal engine features (cursor shape, scrollback, themes, keybindings) are powered by Ghostty and configured in ~/.config/ghostty/config."),
-        engineGroup
-    );
-    engineDescLabel->setWordWrap(true);
-    engineLayout->addWidget(engineDescLabel);
+  auto *engineDescLabel =
+      new QLabel(i18n("Terminal engine features (cursor shape, scrollback, "
+                      "themes, keybindings) are powered by Ghostty and "
+                      "configured in ~/.config/ghostty/config."),
+                 engineGroup);
+  engineDescLabel->setWordWrap(true);
+  engineLayout->addWidget(engineDescLabel);
 
-    auto* engineBtnLayout = new QHBoxLayout();
-    auto* editConfigBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("document-edit")), i18n("Edit Ghostty Config..."), engineGroup);
-    auto* reloadConfigBtn = new QPushButton(QIcon::fromTheme(QStringLiteral("view-refresh")), i18n("Reload Ghostty Config"), engineGroup);
+  auto *engineBtnLayout = new QHBoxLayout();
+  auto *editConfigBtn =
+      new QPushButton(QIcon::fromTheme(QStringLiteral("document-edit")),
+                      i18n("Edit Ghostty Config..."), engineGroup);
+  auto *reloadConfigBtn =
+      new QPushButton(QIcon::fromTheme(QStringLiteral("view-refresh")),
+                      i18n("Reload Ghostty Config"), engineGroup);
 
-    connect(editConfigBtn, &QPushButton::clicked, &dialog, []() {
-        QString configDir = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + QStringLiteral("/ghostty");
-        QDir().mkpath(configDir);
-        QString configPath = configDir + QStringLiteral("/config");
-        QFile configFile(configPath);
-        if (!configFile.exists()) {
-            if (configFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
-                QTextStream out(&configFile);
-                out << "# Ghostty Terminal Configuration\n";
-                out << "# Refer to https://ghostty.org/docs/config for available options.\n";
-                configFile.close();
-            }
-        }
-        QDesktopServices::openUrl(QUrl::fromLocalFile(configPath));
-    });
+  connect(editConfigBtn, &QPushButton::clicked, &dialog, []() {
+    QString configDir = QStandardPaths::writableLocation(
+                            QStandardPaths::GenericConfigLocation) +
+                        QStringLiteral("/ghostty");
+    QDir().mkpath(configDir);
+    QString configPath = configDir + QStringLiteral("/config");
+    QFile configFile(configPath);
+    if (!configFile.exists()) {
+      if (configFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QTextStream out(&configFile);
+        out << "# Ghostty Terminal Configuration\n";
+        out << "# Refer to https://ghostty.org/docs/config for available "
+               "options.\n";
+        configFile.close();
+      }
+    }
+    QDesktopServices::openUrl(QUrl::fromLocalFile(configPath));
+  });
 
-    connect(reloadConfigBtn, &QPushButton::clicked, &dialog, []() {
-        GhosttyCore::instance().reloadConfig();
-    });
+  connect(reloadConfigBtn, &QPushButton::clicked, &dialog,
+          []() { GhosttyCore::instance().reloadConfig(); });
 
-    engineBtnLayout->addWidget(editConfigBtn);
-    engineBtnLayout->addWidget(reloadConfigBtn);
-    engineLayout->addLayout(engineBtnLayout);
+  engineBtnLayout->addWidget(editConfigBtn);
+  engineBtnLayout->addWidget(reloadConfigBtn);
+  engineLayout->addLayout(engineBtnLayout);
 
-    layout->addWidget(engineGroup);
+  layout->addWidget(engineGroup);
 
-    // Dialog Buttons
-    auto* buttonBox = new QDialogButtonBox(
-        QDialogButtonBox::Ok | QDialogButtonBox::Cancel | QDialogButtonBox::Apply,
-        Qt::Horizontal,
-        &dialog
-    );
-    layout->addWidget(buttonBox);
+  // Dialog Buttons
+  auto *buttonBox = new QDialogButtonBox(
+      QDialogButtonBox::Ok | QDialogButtonBox::Cancel | QDialogButtonBox::Apply,
+      Qt::Horizontal, &dialog);
+  layout->addWidget(buttonBox);
 
-    auto applyChanges = [=, this]() {
-        KConfigGroup genGroup(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("General"));
-        genGroup.writeEntry("NewTabInheritsPwd", newTabInheritCheck->isChecked());
-        genGroup.writeEntry("NewSplitInheritsPwd", newSplitInheritCheck->isChecked());
-        genGroup.sync();
+  auto applyChanges = [=, this]() {
+    KConfigGroup genGroup(
+        KSharedConfig::openConfig(QStringLiteral("khosttyrc")),
+        QStringLiteral("General"));
+    genGroup.writeEntry("NewTabInheritsPwd", newTabInheritCheck->isChecked());
+    genGroup.writeEntry("NewSplitInheritsPwd",
+                        newSplitInheritCheck->isChecked());
+    genGroup.sync();
 
-        KConfigGroup appGroup(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("Appearance"));
-        appGroup.writeEntry("ShowHeaderOnlyOnSplit", hideSingleHeaderCheck->isChecked());
-        appGroup.writeEntry("ShowWorklaneScrollbar", showScrollbarCheck->isChecked());
-        if (customAccentCheck->isChecked()) {
-            appGroup.writeEntry("CustomAccentColor", colorBtn->color().name());
-        } else {
-            appGroup.deleteEntry("CustomAccentColor");
-        }
-        appGroup.sync();
+    KConfigGroup appGroup(
+        KSharedConfig::openConfig(QStringLiteral("khosttyrc")),
+        QStringLiteral("Appearance"));
+    appGroup.writeEntry("ShowHeaderOnlyOnSplit",
+                        hideSingleHeaderCheck->isChecked());
+    appGroup.writeEntry("ShowWorklaneScrollbar",
+                        showScrollbarCheck->isChecked());
+    if (customAccentCheck->isChecked()) {
+      appGroup.writeEntry("CustomAccentColor", colorBtn->color().name());
+    } else {
+      appGroup.deleteEntry("CustomAccentColor");
+    }
+    appGroup.sync();
 
-        if (m_sidebar) {
-            m_sidebar->updateAccentColor();
-        }
+    if (m_sidebar) {
+      m_sidebar->updateAccentColor();
+    }
 
-        KConfigGroup fontGroup(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("Font"));
-        fontGroup.writeEntry("UseSystemFixedFont", useSysCheck->isChecked());
-        fontGroup.writeEntry("FontSize", customSizeSpin->value());
-        fontGroup.sync();
+    KConfigGroup fontGroup(
+        KSharedConfig::openConfig(QStringLiteral("khosttyrc")),
+        QStringLiteral("Font"));
+    fontGroup.writeEntry("UseSystemFixedFont", useSysCheck->isChecked());
+    fontGroup.writeEntry("FontSize", customSizeSpin->value());
+    fontGroup.sync();
 
-        GhosttyCore::instance().reloadConfig();
+    GhosttyCore::instance().reloadConfig();
 
-        for (auto* surface : GhosttyCore::instance().allSurfaces()) {
-            if (surface) {
-                surface->applyFontConfig();
-            }
-        }
+    for (auto *surface : GhosttyCore::instance().allSurfaces()) {
+      if (surface) {
+        surface->applyFontConfig();
+      }
+    }
 
-        for (int i = 0; i < m_stack->count(); ++i) {
-            if (auto* wl = qobject_cast<WorklaneView*>(m_stack->widget(i))) {
-                wl->updatePaneDecorations();
-            }
-        }
-    };
+    for (int i = 0; i < m_stack->count(); ++i) {
+      if (auto *wl = qobject_cast<WorklaneView *>(m_stack->widget(i))) {
+        wl->updatePaneDecorations();
+      }
+    }
+  };
 
-    connect(buttonBox->button(QDialogButtonBox::Apply), &QPushButton::clicked, applyChanges);
-    connect(buttonBox, &QDialogButtonBox::accepted, [&dialog, applyChanges]() {
-        applyChanges();
-        dialog.accept();
-    });
-    connect(buttonBox, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  connect(buttonBox->button(QDialogButtonBox::Apply), &QPushButton::clicked,
+          applyChanges);
+  connect(buttonBox, &QDialogButtonBox::accepted, [&dialog, applyChanges]() {
+    applyChanges();
+    dialog.accept();
+  });
+  connect(buttonBox, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
 
-    dialog.exec();
+  dialog.exec();
 }
 
 void MainWindow::showCommandBar() {
-    if (m_commandBar) {
-        m_commandBar->close();
-        return;
-    }
+  if (m_commandBar) {
+    m_commandBar->close();
+    return;
+  }
 
-    auto* bar = new KCommandBar(this);
-    bar->setAttribute(Qt::WA_DeleteOnClose);
-    m_commandBar = bar;
+  auto *bar = new KCommandBar(this);
+  bar->setAttribute(Qt::WA_DeleteOnClose);
+  m_commandBar = bar;
 
-    KCommandBar::ActionGroup group;
-    group.name = QStringLiteral("Actions");
-    group.actions = actionCollection()->actions();
-    bar->setActions({group});
-    bar->show();
-    bar->raise();
+  KCommandBar::ActionGroup group;
+  group.name = QStringLiteral("Actions");
+  group.actions = actionCollection()->actions();
+  bar->setActions({group});
+  bar->show();
+  bar->raise();
 }
 
-void MainWindow::updateTitle(const QString& title) {
-    if (title.isEmpty()) {
-        setWindowTitle(QStringLiteral("Khostty"));
-    } else {
-        setWindowTitle(QStringLiteral("%1 — Khostty").arg(title));
-    }
+void MainWindow::updateTitle(const QString &title) {
+  if (title.isEmpty()) {
+    setWindowTitle(QStringLiteral("Khostty"));
+  } else {
+    setWindowTitle(QStringLiteral("%1 — Khostty").arg(title));
+  }
 }
 
-void MainWindow::changeEvent(QEvent* event) {
-    KXmlGuiWindow::changeEvent(event);
-    if (event->type() == QEvent::ApplicationPaletteChange || event->type() == QEvent::PaletteChange) {
-        syncColorScheme();
-    }
-    if (event->type() == QEvent::ActivationChange && isActiveWindow()) {
-        ghostty_app_set_focus(GhosttyCore::instance().app(), true);
-        auto* wl = currentWorklane();
-        if (wl && wl->activeSurface()) {
-            wl->activeSurface()->setFocus();
-        }
-    }
-}
-
-void MainWindow::showEvent(QShowEvent* event) {
-    KXmlGuiWindow::showEvent(event);
-    auto* wl = currentWorklane();
+void MainWindow::changeEvent(QEvent *event) {
+  KXmlGuiWindow::changeEvent(event);
+  if (event->type() == QEvent::ApplicationPaletteChange ||
+      event->type() == QEvent::PaletteChange) {
+    syncColorScheme();
+  }
+  if (event->type() == QEvent::ActivationChange && isActiveWindow()) {
+    ghostty_app_set_focus(GhosttyCore::instance().app(), true);
+    auto *wl = currentWorklane();
     if (wl && wl->activeSurface()) {
-        wl->activeSurface()->setFocus();
+      wl->activeSurface()->setFocus();
     }
+  }
+}
+
+void MainWindow::showEvent(QShowEvent *event) {
+  KXmlGuiWindow::showEvent(event);
+  auto *wl = currentWorklane();
+  if (wl && wl->activeSurface()) {
+    wl->activeSurface()->setFocus();
+  }
 }
 
 void MainWindow::syncColorScheme() {
-    bool isDark = (qApp->palette().color(QPalette::Window).lightness() < 128);
-    GhosttyCore::instance().setColorScheme(isDark);
-    for (auto* surface : GhosttyCore::instance().allSurfaces()) {
-        if (surface) {
-            surface->update();
-        }
+  bool isDark = (qApp->palette().color(QPalette::Window).lightness() < 128);
+  GhosttyCore::instance().setColorScheme(isDark);
+  for (auto *surface : GhosttyCore::instance().allSurfaces()) {
+    if (surface) {
+      surface->update();
     }
+  }
 }
 
 void MainWindow::handleBell() {
-    auto* s = qobject_cast<TerminalSurface*>(sender());
-    if (s && s != activeSurface() && m_sidebar) {
-        m_sidebar->markSurfaceAlert(s, true);
-    }
-    KNotification::event(QStringLiteral("bell"), i18n("Bell"), QString(), QStringLiteral("utilities-terminal"));
+  auto *s = qobject_cast<TerminalSurface *>(sender());
+  if (s && s != activeSurface() && m_sidebar) {
+    m_sidebar->markSurfaceAlert(s, true);
+  }
+  KNotification::event(QStringLiteral("bell"), i18n("Bell"), QString(),
+                       QStringLiteral("utilities-terminal"));
 }
 
-void MainWindow::handleDesktopNotification(const QString& title, const QString& body) {
-    auto* s = qobject_cast<TerminalSurface*>(sender());
-    if (s && s != activeSurface() && m_sidebar) {
-        m_sidebar->markSurfaceAlert(s, true);
-    }
-    KNotification::event(QStringLiteral("command_finished"), title, body, QStringLiteral("utilities-terminal"));
+void MainWindow::handleDesktopNotification(const QString &title,
+                                           const QString &body) {
+  auto *s = qobject_cast<TerminalSurface *>(sender());
+  if (s && s != activeSurface() && m_sidebar) {
+    m_sidebar->markSurfaceAlert(s, true);
+  }
+  KNotification::event(QStringLiteral("command_finished"), title, body,
+                       QStringLiteral("utilities-terminal"));
 }

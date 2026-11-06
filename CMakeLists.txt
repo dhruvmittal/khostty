@@ -55,6 +55,10 @@ if(GHOSTTY_PREFIX)
         NO_DEFAULT_PATH
         REQUIRED
     )
+    # ghostty-internal.so has SONAME libghostty.so; ensure the symlink exists for the runtime dynamic linker
+    if(EXISTS "${GHOSTTY_LIB_DIR}/ghostty-internal.so" AND NOT EXISTS "${GHOSTTY_LIB_DIR}/libghostty.so")
+        execute_process(COMMAND ${CMAKE_COMMAND} -E create_symlink "ghostty-internal.so" "${GHOSTTY_LIB_DIR}/libghostty.so")
+    endif()
     add_library(Ghostty::Core UNKNOWN IMPORTED GLOBAL)
     set_target_properties(Ghostty::Core PROPERTIES
         IMPORTED_LOCATION "${GHOSTTY_LIBRARY}"
