@@ -10,8 +10,12 @@
 #include <QFile>
 #include <QTextStream>
 #include <QFontDatabase>
+#include <QDesktopServices>
+#include <QUrl>
 #include <KSharedConfig>
 #include <KConfigGroup>
+#include <algorithm>
+#include <cstdint>
 
 GhosttyCore::GhosttyCore() = default;
 
@@ -154,6 +158,26 @@ bool GhosttyCore::actionCallback(ghostty_app_t app, ghostty_target_s target, gho
             case GHOSTTY_ACTION_NEW_TAB:
                 emit self.newTabRequested();
                 return true;
+            case GHOSTTY_ACTION_RELOAD_CONFIG:
+                if (action.action.reload_config.soft) {
+                    if (self.m_app && self.m_config) {
+                        ghostty_app_update_config(self.m_app, self.m_config);
+                        emit self.configChanged();
+                    }
+                } else {
+                    self.reloadConfig();
+                }
+                return true;
+            case GHOSTTY_ACTION_CONFIG_CHANGE:
+                emit self.configChanged();
+                return true;
+            case GHOSTTY_ACTION_OPEN_CONFIG: {
+                QString path = self.openConfigPath();
+                if (!path.isEmpty()) {
+                    QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+                }
+                return true;
+            }
             default:
                 break;
         }
@@ -329,17 +353,59 @@ QString GhosttyCore::writeRuntimeConfig() {
     return runtimeConf;
 }
 
+QString GhosttyCore::openConfigPath() const {
+    ghostty_string_s str = ghostty_config_open_path();
+    QString path;
+    if (str.ptr && str.len > 0) {
+        path = QString::fromUtf8(str.ptr, static_cast<qsizetype>(str.len));
+    }
+    ghostty_string_free(str);
+    return path;
+}
+
 void GhosttyCore::reloadConfig() {
     if (!m_app) return;
     ghostty_config_t cfg = ghostty_config_new();
+    if (!cfg) return;
     ghostty_config_load_default_files(cfg);
     QString runtimeConf = writeRuntimeConfig();
     if (!runtimeConf.isEmpty()) {
         ghostty_config_load_file(cfg, runtimeConf.toUtf8().constData());
     }
     ghostty_config_finalize(cfg);
-    ghostty_app_update_config(m_app, cfg);
-    ghostty_config_free(cfg);
+    if (m_config) {
+        ghostty_config_free(m_config);
+    }
+    m_config = cfg;
+    ghostty_app_update_config(m_app, m_config);
+    emit configChanged();
+}
+
+double GhosttyCore::backgroundOpacity() const {
+    if (!m_config) return 1.0;
+    double opacity = 1.0;
+    if (ghostty_config_get(m_config, &opacity, "background-opacity", 18)) {
+        return std::clamp(opacity, 0.0, 1.0);
+    }
+    return 1.0;
+}
+
+bool GhosttyCore::backgroundBlur() const {
+    if (!m_config) return false;
+    int16_t blur = 0;
+    if (ghostty_config_get(m_config, &blur, "background-blur", 15)) {
+        return blur != 0;
+    }
+    return false;
+}
+
+QColor GhosttyCore::backgroundColor() const {
+    if (!m_config) return QColor(0, 0, 0);
+    ghostty_config_color_s color = {0, 0, 0};
+    if (ghostty_config_get(m_config, &color, "background", 10)) {
+        return QColor(color.r, color.g, color.b);
+    }
+    return QColor(0, 0, 0);
 }
 
 void GhosttyCore::setColorScheme(bool isDark) {

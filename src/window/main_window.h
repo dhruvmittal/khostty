@@ -55,6 +55,7 @@ public slots:
   void showCommandBar();
   void updateTitle(const QString &title);
   void syncColorScheme();
+  void syncAppearance();
   void handleBell();
   void handleDesktopNotification(const QString &title, const QString &body);
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include <QColor>
 #include <QHash>
 #include <QTimer>
 #include <atomic>
@@ -28,6 +29,10 @@ public:
     void reloadConfig();
     void setColorScheme(bool isDark);
     QString writeRuntimeConfig();
+    QString openConfigPath() const;
+    double backgroundOpacity() const;
+    bool backgroundBlur() const;
+    QColor backgroundColor() const;
 
 public slots:
     void tick();
@@ -36,6 +41,7 @@ signals:
     void newWindowRequested();
     void newTabRequested();
     void quitRequested();
+    void configChanged();
 
 private:
     GhosttyCore();

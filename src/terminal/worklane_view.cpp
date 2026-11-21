@@ -31,6 +31,9 @@ WorklaneView::WorklaneView(QWidget *parent, const QString &initialDir)
   m_canvasLayout->setSpacing(0);
 
   setWidget(m_canvas);
+  setAutoFillBackground(false);
+  viewport()->setAutoFillBackground(false);
+  m_canvas->setAutoFillBackground(false);
 
   // Build Search Bar overlay
   m_searchBar = new QWidget(viewport());

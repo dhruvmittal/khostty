@@ -16,6 +16,9 @@
 #include <KStandardAction>
 #include <KToolBar>
 #include <KXMLGUIFactory>
+#ifdef KHOSTTY_HAS_KWINDOWSYSTEM
+#include <KWindowEffects>
+#endif
 #include <QAction>
 #include <QApplication>
 #include <QCheckBox>
@@ -42,9 +45,12 @@
 #include <QVBoxLayout>
 
 MainWindow::MainWindow(QWidget *parent) : KXmlGuiWindow(parent) {
+  setAttribute(Qt::WA_TranslucentBackground, true);
+
   m_tabBar = new QTabBar(this);
   m_tabBar->setObjectName(QStringLiteral("khostty-tabs"));
   m_tabBar->setDocumentMode(true);
+  m_tabBar->setAutoFillBackground(true);
   m_tabBar->setMovable(true);
   m_tabBar->setTabsClosable(true);
   m_tabBar->setExpanding(false);
@@ -54,6 +60,7 @@ MainWindow::MainWindow(QWidget *parent) : KXmlGuiWindow(parent) {
   KAcceleratorManager::setNoAccel(m_tabBar);
   KAcceleratorManager::setNoAccel(this);
   if (menuBar()) {
+    menuBar()->setAutoFillBackground(true);
     KAcceleratorManager::setNoAccel(menuBar());
   }
 
@@ -112,6 +119,7 @@ MainWindow::MainWindow(QWidget *parent) : KXmlGuiWindow(parent) {
   setupActions();
   setupGUI(Keys | Save | Create, QStringLiteral("khosttyui.rc"));
   if (menuBar()) {
+    menuBar()->setAutoFillBackground(true);
     KAcceleratorManager::setNoAccel(menuBar());
   }
   if (toolBar()) {
@@ -124,6 +132,8 @@ MainWindow::MainWindow(QWidget *parent) : KXmlGuiWindow(parent) {
           &MainWindow::newTab);
   connect(&GhosttyCore::instance(), &GhosttyCore::quitRequested, qApp,
           &QCoreApplication::quit);
+  connect(&GhosttyCore::instance(), &GhosttyCore::configChanged, this,
+          &MainWindow::syncAppearance);
 
   connect(qApp, &QGuiApplication::fontDatabaseChanged, this, [this]() {
     GhosttyCore::instance().reloadConfig();
@@ -135,6 +145,7 @@ MainWindow::MainWindow(QWidget *parent) : KXmlGuiWindow(parent) {
   });
 
   syncColorScheme();
+  syncAppearance();
 
   resize(1000, 700);
   setWindowTitle(QStringLiteral("Khostty"));
@@ -973,11 +984,25 @@ void MainWindow::showPreferencesDialog() {
   auto *engineGroup = new QGroupBox(i18n("Ghostty Terminal Engine"), &dialog);
   auto *engineLayout = new QVBoxLayout(engineGroup);
 
-  auto *engineDescLabel =
-      new QLabel(i18n("Terminal engine features (cursor shape, scrollback, "
-                      "themes, keybindings) are powered by Ghostty and "
-                      "configured in ~/.config/ghostty/config."),
-                 engineGroup);
+  QString ghosttyConfigDir = QStandardPaths::writableLocation(
+                                 QStandardPaths::GenericConfigLocation) +
+                             QStringLiteral("/ghostty");
+  QString modernPath = ghosttyConfigDir + QStringLiteral("/config.ghostty");
+  QString legacyPath = ghosttyConfigDir + QStringLiteral("/config");
+  bool hasModern = QFile::exists(modernPath);
+  bool hasLegacy = QFile::exists(legacyPath);
+  QString displayPath = hasModern ? modernPath : (hasLegacy ? legacyPath : modernPath);
+  QString engineDesc =
+      i18n("Terminal engine features (cursor shape, scrollback, "
+           "themes, keybindings) are powered by Ghostty and "
+           "configured in %1.",
+           displayPath);
+  if (hasModern && hasLegacy) {
+    engineDesc += QStringLiteral("\n") +
+                  i18n("Note: Both config and config.ghostty exist; "
+                       "config.ghostty takes precedence.");
+  }
+  auto *engineDescLabel = new QLabel(engineDesc, engineGroup);
   engineDescLabel->setWordWrap(true);
   engineLayout->addWidget(engineDescLabel);
 
@@ -990,13 +1015,12 @@ void MainWindow::showPreferencesDialog() {
                       i18n("Reload Ghostty Config"), engineGroup);
 
   connect(editConfigBtn, &QPushButton::clicked, &dialog, []() {
-    QString configDir = QStandardPaths::writableLocation(
-                            QStandardPaths::GenericConfigLocation) +
-                        QStringLiteral("/ghostty");
-    QDir().mkpath(configDir);
-    QString configPath = configDir + QStringLiteral("/config");
+    QString configPath = GhosttyCore::instance().openConfigPath();
+    if (configPath.isEmpty()) {
+      return;
+    }
     QFile configFile(configPath);
-    if (!configFile.exists()) {
+    if (configFile.exists() && configFile.size() == 0) {
       if (configFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
         QTextStream out(&configFile);
         out << "# Ghostty Terminal Configuration\n";
@@ -1126,6 +1150,7 @@ void MainWindow::changeEvent(QEvent *event) {
 
 void MainWindow::showEvent(QShowEvent *event) {
   KXmlGuiWindow::showEvent(event);
+  syncAppearance();
   auto *wl = currentWorklane();
   if (wl && wl->activeSurface()) {
     wl->activeSurface()->setFocus();
@@ -1140,6 +1165,22 @@ void MainWindow::syncColorScheme() {
       surface->update();
     }
   }
+}
+
+void MainWindow::syncAppearance() {
+#ifdef KHOSTTY_HAS_KWINDOWSYSTEM
+  if (QWindow *win = windowHandle()) {
+    const double opacity = GhosttyCore::instance().backgroundOpacity();
+    const bool blur = GhosttyCore::instance().backgroundBlur() && (opacity < 1.0);
+    KWindowEffects::enableBlurBehind(win, blur);
+  }
+#endif
+  for (auto *surface : GhosttyCore::instance().allSurfaces()) {
+    if (surface) {
+      surface->update();
+    }
+  }
+  update();
 }
 
 void MainWindow::handleBell() {

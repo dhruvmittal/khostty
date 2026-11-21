@@ -8,6 +8,7 @@
 #include <QWheelEvent>
 #include <QFocusEvent>
 #include <QOpenGLContext>
+#include <QSurfaceFormat>
 #include <QFontDatabase>
 #include <QDebug>
 #include <QMenu>
@@ -52,6 +53,10 @@ TerminalSurface::TerminalSurface(QWidget* parent, const QString& workingDirector
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
     setAttribute(Qt::WA_InputMethodEnabled, true);
+    setAttribute(Qt::WA_TranslucentBackground, true);
+    QSurfaceFormat fmt = format();
+    fmt.setAlphaBufferSize(8);
+    setFormat(fmt);
     setUpdateBehavior(QOpenGLWidget::NoPartialUpdate);
 
     ghostty_app_t app = GhosttyCore::instance().app();
@@ -98,11 +103,7 @@ TerminalSurface::TerminalSurface(QWidget* parent, const QString& workingDirector
 
     GhosttyCore::instance().registerSurface(m_surface, this);
 
-    double dpr = devicePixelRatioF();
-    uint32_t px_w = static_cast<uint32_t>(std::max(1, width()) * dpr);
-    uint32_t px_h = static_cast<uint32_t>(std::max(1, height()) * dpr);
-    ghostty_surface_set_content_scale(m_surface, dpr, dpr);
-    ghostty_surface_set_size(m_surface, px_w, px_h);
+    syncSurfaceSize();
 }
 
 TerminalSurface::~TerminalSurface() {
@@ -202,8 +203,8 @@ void TerminalSurface::setupGLResources() {
 
     glGenTextures(1, &m_texture);
     glBindTexture(GL_TEXTURE_2D, m_texture);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glBindTexture(GL_TEXTURE_2D, 0);
@@ -218,7 +219,31 @@ void TerminalSurface::freeGLResources() {
     m_vbo.destroy();
     m_vao.destroy();
     m_program.removeAllShaders();
+    m_hasFrame = false;
     m_glInitialized = false;
+}
+
+void TerminalSurface::syncSurfaceSize() {
+    double dpr = devicePixelRatioF();
+    uint32_t px_w = static_cast<uint32_t>(std::max(1.0, std::round(width() * dpr)));
+    uint32_t px_h = static_cast<uint32_t>(std::max(1.0, std::round(height() * dpr)));
+    syncSurfaceSize(px_w, px_h);
+}
+
+void TerminalSurface::syncSurfaceSize(uint32_t px_w, uint32_t px_h) {
+    if (!m_surface || px_w == 0 || px_h == 0) return;
+
+    double dpr = devicePixelRatioF();
+    if (dpr == m_lastDpr && px_w == m_lastPxW && px_h == m_lastPxH) {
+        return;
+    }
+
+    m_lastDpr = dpr;
+    m_lastPxW = px_w;
+    m_lastPxH = px_h;
+
+    ghostty_surface_set_content_scale(m_surface, dpr, dpr);
+    ghostty_surface_set_size(m_surface, px_w, px_h);
 }
 
 void TerminalSurface::resizeGL(int w, int h) {
@@ -228,8 +253,7 @@ void TerminalSurface::resizeGL(int w, int h) {
     uint32_t px_w = static_cast<uint32_t>(std::max(1.0, std::round(w * dpr)));
     uint32_t px_h = static_cast<uint32_t>(std::max(1.0, std::round(h * dpr)));
 
-    ghostty_surface_set_content_scale(m_surface, dpr, dpr);
-    ghostty_surface_set_size(m_surface, px_w, px_h);
+    syncSurfaceSize(px_w, px_h);
 }
 
 bool TerminalSurface::importDmaBufFrame(const khostty_frame_dmabuf_s& dmabuf) {
@@ -305,15 +329,23 @@ void TerminalSurface::uploadMemoryFrame(const khostty_frame_memory_s& memory) {
         memory.pixels
     );
     glBindTexture(GL_TEXTURE_2D, 0);
+    m_hasFrame = true;
 }
 
 void TerminalSurface::paintGL() {
     if (!m_surface || !m_glInitialized || !isValid() || !context()) return;
 
+    GLint vp[4] = {0, 0, 0, 0};
+    glGetIntegerv(GL_VIEWPORT, vp);
+    if (vp[2] > 0 && vp[3] > 0) {
+        syncSurfaceSize(static_cast<uint32_t>(vp[2]), static_cast<uint32_t>(vp[3]));
+    }
+
     khostty_exported_frame_s frame = {};
     if (khostty_surface_take_frame(m_surface, &frame)) {
         if (frame.frame_type == KHOSTTY_FRAME_DMABUF) {
             bool ok = importDmaBufFrame(frame.dmabuf);
+            if (ok) m_hasFrame = true;
             khostty_surface_release_frame(m_surface, &frame);
             khostty_surface_report_presentation_health(m_surface, ok);
         } else if (frame.frame_type == KHOSTTY_FRAME_MEMORY) {
@@ -322,21 +354,23 @@ void TerminalSurface::paintGL() {
         }
     }
 
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 
-    m_program.bind();
-    m_vao.bind();
+    if (m_hasFrame) {
+        m_program.bind();
+        m_vao.bind();
 
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, m_texture);
-    m_program.setUniformValue("uTexture", 0);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, m_texture);
+        m_program.setUniformValue("uTexture", 0);
 
-    glDrawArrays(GL_TRIANGLES, 0, 6);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
 
-    glBindTexture(GL_TEXTURE_2D, 0);
-    m_vao.release();
-    m_program.release();
+        glBindTexture(GL_TEXTURE_2D, 0);
+        m_vao.release();
+        m_program.release();
+    }
 }
 
 ghostty_input_mods_e TerminalSurface::translateModifiers(Qt::KeyboardModifiers qmods) const {
@@ -438,6 +472,12 @@ bool TerminalSurface::focusNextPrevChild(bool next) {
 }
 
 bool TerminalSurface::event(QEvent* event) {
+    if (event->type() == QEvent::DevicePixelRatioChange) {
+        bool handled = QOpenGLWidget::event(event);
+        syncSurfaceSize();
+        update();
+        return handled;
+    }
     if (event->type() == QEvent::KeyPress) {
         auto* keyEvent = static_cast<QKeyEvent*>(event);
         if (keyEvent->key() == Qt::Key_Tab || keyEvent->key() == Qt::Key_Backtab) {
@@ -767,6 +807,17 @@ bool TerminalSurface::handleAction(const ghostty_action_s& action) {
                     QString::fromUtf8(action.action.desktop_notification.title),
                     QString::fromUtf8(action.action.desktop_notification.body)
                 );
+            }
+            return true;
+
+        case GHOSTTY_ACTION_RELOAD_CONFIG:
+            if (action.action.reload_config.soft) {
+                if (GhosttyCore::instance().app() && GhosttyCore::instance().config()) {
+                    ghostty_app_update_config(GhosttyCore::instance().app(), GhosttyCore::instance().config());
+                    emit GhosttyCore::instance().configChanged();
+                }
+            } else {
+                GhosttyCore::instance().reloadConfig();
             }
             return true;
 

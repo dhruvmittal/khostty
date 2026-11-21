@@ -40,6 +40,7 @@ private:
     void updateHeaderStyle();
 
     TerminalSurface* m_surface = nullptr;
+    QWidget* m_seamOverlay = nullptr;
     QWidget* m_header = nullptr;
     QLabel* m_dotIndicator = nullptr;
     QLabel* m_titleLabel = nullptr;
