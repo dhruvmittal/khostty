@@ -10,7 +10,7 @@
 }:
 stdenv.mkDerivation (finalAttrs: {
   pname = "khostty";
-  version = "0.1.1";
+  version = "0.1.2";
 
   src = lib.cleanSourceWith {
     src = ../.;
@@ -42,7 +42,6 @@ stdenv.mkDerivation (finalAttrs: {
     kdePackages.ki18n
     kdePackages.kwindowsystem
     kdePackages.knotifications
-    kdePackages.kio
     libGL
     libghostty-bridge
   ];

@@ -71,7 +71,6 @@
           pkgs.kdePackages.ki18n
           pkgs.kdePackages.kwindowsystem
           pkgs.kdePackages.knotifications
-          pkgs.kdePackages.kio
           libghostty-bridge
         ];
         GHOSTTY_PREFIX = "${libghostty-bridge}";

@@ -1,6 +1,6 @@
 # Maintainer: Dhruv <dhruv@example.com>
 pkgname=khostty
-pkgver=0.1.1
+pkgver=0.1.2
 _ghostty_ver=1.4.0
 pkgrel=1
 pkgdesc="A native KDE Plasma 6 terminal emulator powered by libghostty"
