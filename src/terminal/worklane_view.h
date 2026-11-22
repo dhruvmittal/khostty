@@ -3,6 +3,7 @@
 #include "terminal/khostty_splitter.h"
 #include "terminal/worklane_separator.h"
 #include <QHBoxLayout>
+#include <QHash>
 #include <QList>
 #include <QPointer>
 #include <QScrollArea>
@@ -67,6 +68,9 @@ public:
   void rebuildCanvasLayout();
   void updateCanvasLayout();
   void updatePaneDecorations();
+  void setColumnWidth(KhosttySplitter *col, int width);
+  static int minColumnWidth(int viewportW);
+  static int maxColumnWidth(int viewportW);
 
   void ensureSurfaceVisible(TerminalSurface *surface);
 
@@ -91,6 +95,7 @@ private:
   QWidget *m_canvas = nullptr;
   QHBoxLayout *m_canvasLayout = nullptr;
   QList<KhosttySplitter *> m_columns;
+  QHash<KhosttySplitter *, double> m_columnRatios;
   QList<WorklaneSeparator *> m_separators;
   TerminalSurface *m_activeSurface = nullptr;
   QString m_activeTitle;

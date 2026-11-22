@@ -17,8 +17,26 @@
 #include <QToolButton>
 #include <QWheelEvent>
 #include <algorithm>
+#include <cmath>
 
 namespace {
+constexpr int kMinPaneWidth = 200;
+constexpr int kMinColumnWidth = 280;
+constexpr int kSeparatorWidth = 8;
+constexpr double kDefaultColumnRatio = 0.5;
+constexpr double kMaxColumnRatio = 0.9;
+
+int computeColumnWidth(double ratio, int viewportW) {
+  const int minW = WorklaneView::minColumnWidth(viewportW);
+  const int maxW = WorklaneView::maxColumnWidth(viewportW);
+  if (viewportW <= 0) {
+    return minW;
+  }
+  const int desired =
+      static_cast<int>(ratio * viewportW + 1e-9) - kSeparatorWidth;
+  return std::clamp(desired, minW, maxW);
+}
+
 void equalizeColumn(KhosttySplitter *col) {
   if (!col)
     return;
@@ -54,6 +72,7 @@ WorklaneView::WorklaneView(QWidget *parent, const QString &initialDir)
   setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
   setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
   setFrameShape(QFrame::NoFrame);
+  setMinimumWidth(kMinPaneWidth);
 
   m_canvas = new QWidget(viewport());
   m_canvasLayout = new QHBoxLayout(m_canvas);
@@ -275,17 +294,14 @@ TerminalPane *WorklaneView::detachSurface(TerminalSurface *surface) {
 
   if (colSplitter->count() == 0) {
     m_columns.removeOne(colSplitter);
+    m_columnRatios.remove(colSplitter);
     colSplitter->hide();
     colSplitter->setParent(nullptr);
     colSplitter->deleteLater();
     rebuildCanvasLayout();
   } else {
     equalizeColumn(colSplitter);
-    if (m_columns.size() == 1 && !hasAnySplit()) {
-      rebuildCanvasLayout();
-    } else {
-      updateCanvasLayout();
-    }
+    updateCanvasLayout();
   }
   updatePaneDecorations();
   emit layoutChanged();
@@ -316,11 +332,7 @@ void WorklaneView::attachPaneAsColumn(TerminalPane *pane, int colIndex) {
   if (m_zoomedPane)
     unzoom();
 
-  int viewportW = viewport()->width();
-  int viewportH = viewport()->height();
-
   auto *colSplitter = new KhosttySplitter(Qt::Vertical, m_canvas);
-  colSplitter->setMinimumHeight(std::max(100, viewportH));
 
   pane->setParent(colSplitter);
   setupSurface(pane->surface());
@@ -329,12 +341,14 @@ void WorklaneView::attachPaneAsColumn(TerminalPane *pane, int colIndex) {
   pane->show();
 
   if (m_columns.isEmpty()) {
-    colSplitter->setFixedWidth(std::max(400, viewportW));
+    m_columnRatios.insert(colSplitter, kDefaultColumnRatio);
     m_columns.append(colSplitter);
   } else {
-    int maxAllowed = std::max(280, static_cast<int>(viewportW * 0.90));
-    int colW = std::clamp(static_cast<int>(viewportW * 0.50), 350, maxAllowed);
-    colSplitter->setFixedWidth(colW);
+    if (m_columns.size() == 1) {
+      // Transitioning from single full-width column to multi-column starts 50/50.
+      m_columnRatios[m_columns[0]] = kDefaultColumnRatio;
+    }
+    m_columnRatios.insert(colSplitter, kDefaultColumnRatio);
     int insertIdx = std::clamp(colIndex, 0, static_cast<int>(m_columns.size()));
     m_columns.insert(insertIdx, colSplitter);
   }
@@ -371,12 +385,7 @@ void WorklaneView::attachPaneToColumn(TerminalPane *pane, int colIndex,
   pane->show();
 
   equalizeColumn(colSplitter);
-
-  if (m_columns.size() == 1) {
-    rebuildCanvasLayout();
-  } else {
-    updateCanvasLayout();
-  }
+  updateCanvasLayout();
   updatePaneDecorations();
   emit layoutChanged();
 
@@ -450,6 +459,37 @@ void WorklaneView::updatePaneDecorations() {
   updateScrollBarPolicy();
 }
 
+int WorklaneView::maxColumnWidth(int viewportW) {
+  if (viewportW <= 0) {
+    return kMinColumnWidth;
+  }
+  return std::max(kMinPaneWidth,
+                  static_cast<int>(viewportW * kMaxColumnRatio));
+}
+
+int WorklaneView::minColumnWidth(int viewportW) {
+  return std::min(kMinColumnWidth, maxColumnWidth(viewportW));
+}
+
+void WorklaneView::setColumnWidth(KhosttySplitter *col, int width) {
+  if (!col || !m_columns.contains(col) || m_columns.size() <= 1) {
+    return;
+  }
+  const int viewportW = viewport()->width();
+  if (viewportW <= 0) {
+    return;
+  }
+  const int minW = minColumnWidth(viewportW);
+  const int maxW = maxColumnWidth(viewportW);
+  if (minW >= maxW) {
+    return;
+  }
+  const int clampedW = std::clamp(width, minW, maxW);
+  m_columnRatios[col] =
+      static_cast<double>(clampedW + kSeparatorWidth) / viewportW;
+  updateCanvasLayout();
+}
+
 void WorklaneView::rebuildCanvasLayout() {
   int savedScroll = horizontalScrollBar()->value();
 
@@ -468,28 +508,20 @@ void WorklaneView::rebuildCanvasLayout() {
     return;
   }
 
-  int viewportW = viewport()->width();
-  bool splitPresent = hasAnySplit();
-  int maxAllowed = splitPresent
-                       ? std::max(280, static_cast<int>(viewportW * 0.90))
-                       : viewportW;
-
-  if (!splitPresent && m_columns.size() == 1) {
+  if (m_columns.size() == 1) {
     auto *col = m_columns[0];
-    col->setMinimumWidth(200);
+    col->setMinimumWidth(kMinPaneWidth);
     col->setMaximumWidth(QWIDGETSIZE_MAX);
     m_canvasLayout->addWidget(col, 1);
   } else {
     for (auto *col : m_columns) {
-      if (col->width() > maxAllowed) {
-        col->setFixedWidth(maxAllowed);
-      }
       m_canvasLayout->addWidget(col);
 
       auto *sep = new WorklaneSeparator(col, this, m_canvas);
       m_separators.append(sep);
       m_canvasLayout->addWidget(sep);
     }
+    m_canvasLayout->addStretch(1);
   }
 
   updateCanvasLayout();
@@ -500,35 +532,54 @@ void WorklaneView::rebuildCanvasLayout() {
 void WorklaneView::updateCanvasLayout() {
   int viewportW = viewport()->width();
   int viewportH = viewport()->height();
+  if (viewportW <= 0 || viewportH <= 0) {
+    return;
+  }
 
   int totalW = 0;
-  bool splitPresent = hasAnySplit();
-  int maxAllowed = splitPresent
-                       ? std::max(280, static_cast<int>(viewportW * 0.90))
-                       : viewportW;
 
-  if (!splitPresent && m_columns.size() == 1) {
+  if (m_columns.size() == 1) {
     auto *col = m_columns[0];
-    col->setMinimumWidth(200);
+    col->setMinimumWidth(kMinPaneWidth);
     col->setMaximumWidth(QWIDGETSIZE_MAX);
     col->setFixedHeight(viewportH);
     totalW = viewportW;
   } else {
+    QList<int> colWidths;
+    colWidths.reserve(m_columns.size());
+    double totalRatio = 0.0;
+
     for (auto *col : m_columns) {
-      if (splitPresent && col->width() > maxAllowed) {
-        col->setFixedWidth(maxAllowed);
+      const double ratio = m_columnRatios.value(col, kDefaultColumnRatio);
+      totalRatio += ratio;
+      const int colW = computeColumnWidth(ratio, viewportW);
+      colWidths.append(colW);
+      totalW += colW;
+    }
+    totalW += static_cast<int>(m_separators.size()) * kSeparatorWidth;
+
+    if (!colWidths.isEmpty() && std::abs(totalRatio - 1.0) < 1e-6) {
+      const int rem = viewportW - totalW;
+      if (rem > 0 && rem < colWidths.size() &&
+          colWidths.last() + rem <= maxColumnWidth(viewportW)) {
+        colWidths.last() += rem;
+        totalW += rem;
       }
-      col->setFixedHeight(viewportH);
-      totalW += col->width();
+    }
+
+    for (int i = 0; i < m_columns.size(); ++i) {
+      m_columns[i]->setFixedWidth(colWidths[i]);
+      m_columns[i]->setFixedHeight(viewportH);
     }
     for (auto *sep : m_separators) {
       sep->setFixedHeight(viewportH);
-      totalW += sep->width();
     }
   }
 
   int finalW = std::max(totalW, viewportW);
   m_canvas->setFixedSize(finalW, viewportH);
+  m_canvasLayout->invalidate();
+  m_canvasLayout->activate();
 }
 
 void WorklaneView::resizeEvent(QResizeEvent *event) {
@@ -797,20 +848,10 @@ void WorklaneView::equalizeSplits() {
   if (m_columns.isEmpty())
     return;
 
-  int viewportW = viewport()->width();
-  bool splitPresent = hasAnySplit();
-  int maxAllowed = splitPresent
-                       ? std::max(280, static_cast<int>(viewportW * 0.90))
-                       : viewportW;
-
-  if (m_columns.size() == 1) {
-    m_columns[0]->setFixedWidth(splitPresent ? maxAllowed : viewportW);
-  } else {
-    int count = static_cast<int>(m_columns.size());
-    int available = (viewportW - 8 * count) / count;
-    int equalW = std::min(maxAllowed, std::max(350, available));
+  if (m_columns.size() > 1) {
+    const double equalRatio = 1.0 / static_cast<double>(m_columns.size());
     for (auto *col : m_columns) {
-      col->setFixedWidth(equalW);
+      m_columnRatios[col] = equalRatio;
     }
   }
 

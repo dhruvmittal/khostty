@@ -84,7 +84,7 @@ TerminalPane::TerminalPane(TerminalSurface* surface, QWidget* parent)
 
     // Title label
     m_titleLabel = new QLabel(i18n("Terminal"), m_header);
-    m_titleLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    m_titleLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
 
     // Position indicator pill (e.g. "Col 1/3")
     m_positionLabel = new QLabel(m_header);
@@ -133,7 +133,7 @@ TerminalPane::TerminalPane(TerminalSurface* surface, QWidget* parent)
     connect(m_closeBtn, &QToolButton::clicked, this, &TerminalPane::closeRequested);
 
     headerLayout->addWidget(m_dotIndicator);
-    headerLayout->addWidget(m_titleLabel);
+    headerLayout->addWidget(m_titleLabel, 1);
     headerLayout->addWidget(m_positionLabel);
     headerLayout->addWidget(m_zoomBadgeBtn);
     headerLayout->addWidget(m_splitRightBtn);
