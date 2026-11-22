@@ -18,7 +18,7 @@ int main(int argc, char* argv[]) {
     KAboutData aboutData(
         QStringLiteral("khostty"),
         i18n("Khostty"),
-        QStringLiteral("0.1.0"),
+        QStringLiteral("0.1.1"),
         i18n("A native KDE Plasma 6 terminal emulator powered by libghostty"),
         KAboutLicense::MIT,
         i18n("(c) 2026 Khostty Developers")
