@@ -1,17 +1,65 @@
 #include "terminal/terminal_pane.h"
 #include "terminal/terminal_surface.h"
+#include "core/ghostty_core.h"
 
 #include <QPainter>
 #include <QMouseEvent>
 #include <QIcon>
 #include <QApplication>
 #include <KLocalizedString>
+#include <cmath>
+
+namespace {
+// Qt6's QPlatformBackingStore::rhiFlush() blits QOpenGLWidget over
+// floor(dim * dpr) inside a ceil(dim * dpr) backing store, leaving a
+// 1-device-pixel transparent strip at the top/right edges on fractional DPR
+// when WA_TranslucentBackground is active. Raised above TerminalSurface so
+// it paints after QWidgetPrivate::drawWidget() clears the surface hole.
+class FractionalSeamOverlay : public QWidget {
+public:
+    explicit FractionalSeamOverlay(QWidget* parent) : QWidget(parent) {
+        setAttribute(Qt::WA_TransparentForMouseEvents, true);
+        setAttribute(Qt::WA_NoSystemBackground, true);
+        setAutoFillBackground(false);
+        setFocusPolicy(Qt::NoFocus);
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        const qreal dpr = devicePixelRatioF();
+        const qreal exactW = width() * dpr;
+        const qreal exactH = height() * dpr;
+        const int physW = static_cast<int>(std::ceil(exactW));
+        const int physH = static_cast<int>(std::ceil(exactH));
+        const bool gapTop = (physH > static_cast<int>(std::floor(exactH)));
+        const bool gapRight = (physW > static_cast<int>(std::floor(exactW)));
+        if (!gapTop && !gapRight) {
+            return;
+        }
+
+        QColor bg = GhosttyCore::instance().backgroundColor();
+        bg.setAlphaF(static_cast<float>(GhosttyCore::instance().backgroundOpacity()));
+
+        QPainter p(this);
+        p.setCompositionMode(QPainter::CompositionMode_Source);
+        p.setRenderHint(QPainter::Antialiasing, false);
+        p.scale(1.0 / dpr, 1.0 / dpr);
+        if (gapTop) {
+            p.fillRect(QRect(0, 0, physW, 1), bg);
+        }
+        if (gapRight) {
+            p.fillRect(QRect(physW - 1, 0, 1, physH), bg);
+        }
+    }
+};
+} // namespace
 
 TerminalPane::TerminalPane(TerminalSurface* surface, QWidget* parent)
     : QFrame(parent)
     , m_surface(surface)
 {
     setFrameShape(QFrame::NoFrame);
+    setAutoFillBackground(false);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     setMinimumSize(200, 80);
 
@@ -21,6 +69,7 @@ TerminalPane::TerminalPane(TerminalSurface* surface, QWidget* parent)
 
     // Header bar (Window Chrome)
     m_header = new QWidget(this);
+    m_header->setAttribute(Qt::WA_StyledBackground, true);
     m_header->setFixedHeight(26);
     m_header->setCursor(Qt::ArrowCursor);
     m_header->installEventFilter(this);
@@ -102,6 +151,11 @@ TerminalPane::TerminalPane(TerminalSurface* surface, QWidget* parent)
         if (!m_surface->title().isEmpty()) {
             setTitle(m_surface->title());
         }
+        m_seamOverlay = new FractionalSeamOverlay(this);
+        m_seamOverlay->setGeometry(m_surface->geometry());
+        m_seamOverlay->raise();
+        connect(&GhosttyCore::instance(), &GhosttyCore::configChanged,
+                m_seamOverlay, QOverload<>::of(&QWidget::update));
     }
 
     updateHeaderStyle();
@@ -206,6 +260,12 @@ bool TerminalPane::eventFilter(QObject* watched, QEvent* event) {
         }
     }
     if (watched == m_surface) {
+        if (m_seamOverlay && (event->type() == QEvent::Resize ||
+                              event->type() == QEvent::Move ||
+                              event->type() == QEvent::Show)) {
+            m_seamOverlay->setGeometry(m_surface->geometry());
+            m_seamOverlay->raise();
+        }
         if (event->type() == QEvent::FocusIn) {
             setActive(true);
         } else if (event->type() == QEvent::FocusOut) {

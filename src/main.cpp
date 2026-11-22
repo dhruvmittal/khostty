@@ -1,12 +1,17 @@
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QIcon>
+#include <QSurfaceFormat>
 #include <KAboutData>
 #include <KLocalizedString>
 #include "core/ghostty_core.h"
 #include "window/main_window.h"
 
 int main(int argc, char* argv[]) {
+    QSurfaceFormat format = QSurfaceFormat::defaultFormat();
+    format.setAlphaBufferSize(8);
+    QSurfaceFormat::setDefaultFormat(format);
+
     QApplication app(argc, argv);
     KLocalizedString::setApplicationDomain("khostty");
 

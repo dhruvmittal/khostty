@@ -69,6 +69,8 @@ protected:
 private:
     void setupGLResources();
     void freeGLResources();
+    void syncSurfaceSize();
+    void syncSurfaceSize(uint32_t px_w, uint32_t px_h);
     bool importDmaBufFrame(const khostty_frame_dmabuf_s& dmabuf);
     void uploadMemoryFrame(const khostty_frame_memory_s& memory);
     ghostty_input_mods_e translateModifiers(Qt::KeyboardModifiers qmods) const;
@@ -85,6 +87,10 @@ private:
     QOpenGLVertexArrayObject m_vao;
     GLuint m_texture = 0;
     bool m_glInitialized = false;
+    bool m_hasFrame = false;
+    double m_lastDpr = 0.0;
+    uint32_t m_lastPxW = 0;
+    uint32_t m_lastPxH = 0;
 
     // DMA-BUF EGL state
     void* m_eglDisplay = nullptr;
