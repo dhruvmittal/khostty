@@ -354,10 +354,10 @@ void TerminalSurface::paintGL() {
         }
     }
 
-    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
-
     if (m_hasFrame) {
+        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+
         m_program.bind();
         m_vao.bind();
 
@@ -370,6 +370,12 @@ void TerminalSurface::paintGL() {
         glBindTexture(GL_TEXTURE_2D, 0);
         m_vao.release();
         m_program.release();
+    } else {
+        // Fill with premultiplied Ghostty background until the first frame arrives.
+        const QColor bg = GhosttyCore::instance().backgroundColor();
+        const float a = static_cast<float>(GhosttyCore::instance().backgroundOpacity());
+        glClearColor(bg.redF() * a, bg.greenF() * a, bg.blueF() * a, a);
+        glClear(GL_COLOR_BUFFER_BIT);
     }
 }
 
