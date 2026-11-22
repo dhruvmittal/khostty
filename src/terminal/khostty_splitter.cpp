@@ -148,13 +148,6 @@ KhosttySplitter::KhosttySplitter(Qt::Orientation orientation, QWidget* parent)
     setChildrenCollapsible(false);
 }
 
-KhosttySplitter::KhosttySplitter(QWidget* parent)
-    : QSplitter(parent)
-{
-    setHandleWidth(8);
-    setChildrenCollapsible(false);
-}
-
 QSplitterHandle* KhosttySplitter::createHandle() {
     return new KhosttySplitterHandle(orientation(), this);
 }

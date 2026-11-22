@@ -5,6 +5,8 @@
 #include <QOpenGLShaderProgram>
 #include <QOpenGLBuffer>
 #include <QOpenGLVertexArrayObject>
+#include <QUrl>
+#include <string_view>
 #include <ghostty.h>
 #include <khostty_bridge.h>
 
@@ -22,11 +24,10 @@ public:
 
     bool handleAction(const ghostty_action_s& action);
     void handleProcessExited(bool exited);
+    bool performBindingAction(std::string_view action);
 
-    void pasteText(const QString& text);
-    void sendText(const QString& text);
-    void applyFontConfig();
-    void setFontSize(float points);
+    static bool isAllowedExternalUrl(const QUrl& url);
+    static bool openExternalUrl(const QString& rawUrl);
 
     void startSearch(const QString& needle);
     void navigateSearch(bool next);
@@ -37,15 +38,17 @@ signals:
     void pwdChanged(const QString& pwd);
     void bell();
     void closeRequested();
+    void newTabRequested();
+    void contextMenuRequested(const QPoint& globalPos, const QString& hoveredUrl);
     void desktopNotification(const QString& title, const QString& body);
-    void newSplitRequested(ghostty_action_split_direction_e direction);
     void gotoSplitRequested(ghostty_action_goto_split_e direction);
     void gotoTabRequested(int tabIndex);
     void nextTabRequested();
     void previousTabRequested();
     void toggleCommandPaletteRequested();
     void splitRequested(Qt::Orientation orientation);
-    void searchStatsChanged(int total, int selected);
+    void searchTotalChanged(int total);
+    void searchSelectedChanged(int selected);
 
 protected:
     bool event(QEvent* event) override;
@@ -76,7 +79,6 @@ private:
     ghostty_input_mods_e translateModifiers(Qt::KeyboardModifiers qmods) const;
     ghostty_input_mouse_button_e translateMouseButton(Qt::MouseButton btn) const;
     ghostty_input_key_s buildGhosttyKeyEvent(QKeyEvent* event, ghostty_input_action_e action, QByteArray& textStorage) const;
-    void showContextMenu(const QPoint& globalPos);
     static Qt::CursorShape mapGhosttyMouseShape(ghostty_action_mouse_shape_e shape);
 
     ghostty_surface_t m_surface = nullptr;

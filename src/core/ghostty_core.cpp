@@ -48,18 +48,10 @@ bool GhosttyCore::initialize(int argc, char** argv) {
         return false;
     }
 
-    m_config = ghostty_config_new();
+    m_config = loadConfig();
     if (!m_config) {
-        qWarning() << "Failed to allocate ghostty configuration";
         return false;
     }
-
-    ghostty_config_load_default_files(m_config);
-    QString runtimeConf = writeRuntimeConfig();
-    if (!runtimeConf.isEmpty()) {
-        ghostty_config_load_file(m_config, runtimeConf.toUtf8().constData());
-    }
-    ghostty_config_finalize(m_config);
 
     ghostty_runtime_config_s runtime_config = {};
     runtime_config.userdata = this;
@@ -81,6 +73,11 @@ bool GhosttyCore::initialize(int argc, char** argv) {
 
     m_initialized = true;
 
+    if (qGuiApp) {
+        connect(qGuiApp, &QGuiApplication::fontDatabaseChanged,
+                this, [this]() { reloadConfig(false); });
+    }
+
     // Ghostty uses wakeupCallback for event-driven ticks.
     // Keep a relaxed 500ms heartbeat timer as a safeguard rather than 16ms busy-polling.
     connect(&m_tickTimer, &QTimer::timeout, this, &GhosttyCore::tick);
@@ -94,7 +91,11 @@ void GhosttyCore::shutdown() {
         return;
     }
     m_initialized = false;
+    m_lastDark.reset();
     m_tickTimer.stop();
+    if (qGuiApp) {
+        disconnect(qGuiApp, &QGuiApplication::fontDatabaseChanged, this, nullptr);
+    }
 
     m_surfaces.clear();
 
@@ -159,14 +160,7 @@ bool GhosttyCore::actionCallback(ghostty_app_t app, ghostty_target_s target, gho
                 emit self.newTabRequested();
                 return true;
             case GHOSTTY_ACTION_RELOAD_CONFIG:
-                if (action.action.reload_config.soft) {
-                    if (self.m_app && self.m_config) {
-                        ghostty_app_update_config(self.m_app, self.m_config);
-                        emit self.configChanged();
-                    }
-                } else {
-                    self.reloadConfig();
-                }
+                self.reloadConfig(action.action.reload_config.soft);
                 return true;
             case GHOSTTY_ACTION_CONFIG_CHANGE:
                 emit self.configChanged();
@@ -363,22 +357,43 @@ QString GhosttyCore::openConfigPath() const {
     return path;
 }
 
-void GhosttyCore::reloadConfig() {
-    if (!m_app) return;
+ghostty_config_t GhosttyCore::loadConfig() {
     ghostty_config_t cfg = ghostty_config_new();
-    if (!cfg) return;
+    if (!cfg) {
+        qWarning() << "Failed to allocate ghostty configuration";
+        return nullptr;
+    }
     ghostty_config_load_default_files(cfg);
     QString runtimeConf = writeRuntimeConfig();
     if (!runtimeConf.isEmpty()) {
         ghostty_config_load_file(cfg, runtimeConf.toUtf8().constData());
     }
     ghostty_config_finalize(cfg);
-    if (m_config) {
-        ghostty_config_free(m_config);
+    return cfg;
+}
+
+void GhosttyCore::reloadConfig(bool soft) {
+    if (!m_app) return;
+    if (!soft) {
+        ghostty_config_t cfg = loadConfig();
+        if (!cfg) return;
+        if (m_config) {
+            ghostty_config_free(m_config);
+        }
+        m_config = cfg;
     }
-    m_config = cfg;
-    ghostty_app_update_config(m_app, m_config);
-    emit configChanged();
+    if (m_config) {
+        // Synchronously triggers GHOSTTY_ACTION_CONFIG_CHANGE -> configChanged().
+        ghostty_app_update_config(m_app, m_config);
+    }
+}
+
+void GhosttyCore::resetAllFontSizes() {
+    for (auto* surface : m_surfaces.values()) {
+        if (surface) {
+            surface->performBindingAction("reset_font_size");
+        }
+    }
 }
 
 double GhosttyCore::backgroundOpacity() const {
@@ -409,10 +424,13 @@ QColor GhosttyCore::backgroundColor() const {
 }
 
 void GhosttyCore::setColorScheme(bool isDark) {
-    if (m_app) {
-        ghostty_app_set_color_scheme(
-            m_app,
-            isDark ? GHOSTTY_COLOR_SCHEME_DARK : GHOSTTY_COLOR_SCHEME_LIGHT
-        );
+    if (!m_app) return;
+    if (m_lastDark.has_value() && *m_lastDark == isDark) {
+        return;
     }
+    m_lastDark = isDark;
+    ghostty_app_set_color_scheme(
+        m_app,
+        isDark ? GHOSTTY_COLOR_SCHEME_DARK : GHOSTTY_COLOR_SCHEME_LIGHT
+    );
 }

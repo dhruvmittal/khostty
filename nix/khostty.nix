@@ -34,18 +34,15 @@ stdenv.mkDerivation (finalAttrs: {
     kdePackages.breeze
     kdePackages.breeze-icons
     kdePackages.plasma-integration
-    kdePackages.qqc2-desktop-style
     kdePackages.kxmlgui
     kdePackages.kconfig
     kdePackages.kconfigwidgets
     kdePackages.kwidgetsaddons
     kdePackages.kcoreaddons
     kdePackages.ki18n
-    kdePackages.kglobalaccel
     kdePackages.kwindowsystem
     kdePackages.knotifications
     kdePackages.kio
-    kdePackages.layer-shell-qt
     libGL
     libghostty-bridge
   ];

@@ -4,6 +4,7 @@
 #include "terminal/worklane_separator.h"
 #include <QHBoxLayout>
 #include <QList>
+#include <QPointer>
 #include <QScrollArea>
 #include <QWidget>
 
@@ -53,6 +54,11 @@ public:
   void focusDownSplit();
   void equalizeSplits();
   void toggleSplitZoom();
+  void unzoom();
+  void setActiveSurface(TerminalSurface *surface);
+
+  static QString formatPositionTag(int colIdx, int colCount, int rowIdx,
+                                   int rowCount);
 
   void toggleSearchBar();
   void showSearchBar();
@@ -78,7 +84,7 @@ protected:
 private:
   void setupSurface(TerminalSurface *surface);
   void setupPane(TerminalPane *pane);
-  void setActiveSurface(TerminalSurface *surface);
+  void updateSearchCountLabel();
   TerminalPane *findPaneForSurface(TerminalSurface *surface) const;
   KhosttySplitter *findSplitterForSurface(TerminalSurface *surface) const;
 
@@ -88,12 +94,12 @@ private:
   QList<WorklaneSeparator *> m_separators;
   TerminalSurface *m_activeSurface = nullptr;
   QString m_activeTitle;
-  bool m_isZoomed = false;
+  QPointer<TerminalPane> m_zoomedPane;
 
   // Search bar overlay
   QWidget *m_searchBar = nullptr;
   QLineEdit *m_searchEdit = nullptr;
   QLabel *m_searchCountLabel = nullptr;
-  int m_searchTotal = 0;
-  int m_searchSelected = 0;
+  int m_searchTotal = -1;
+  int m_searchSelected = -1;
 };

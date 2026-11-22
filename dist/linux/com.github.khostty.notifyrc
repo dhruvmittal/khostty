@@ -12,9 +12,3 @@ Sound=dialog-information
 Name=Long running command completed
 Comment=A command in an unfocused tab or split finished executing
 Action=Popup
-
-[Event/attention_needed]
-Name=Process waiting for input
-Comment=A command in an unfocused tab or split requires user input
-Action=Popup
-Urgency=High

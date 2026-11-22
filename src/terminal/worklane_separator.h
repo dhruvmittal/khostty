@@ -11,9 +11,6 @@ public:
     WorklaneSeparator(QWidget* leftCol, WorklaneView* worklane, QWidget* parent = nullptr);
     ~WorklaneSeparator() override;
 
-    QWidget* leftColumn() const { return m_leftCol; }
-    void setLeftColumn(QWidget* col) { m_leftCol = col; }
-
     QSize sizeHint() const override;
 
 protected:
