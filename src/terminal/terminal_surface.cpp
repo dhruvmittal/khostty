@@ -1,6 +1,5 @@
 #include "terminal/terminal_surface.h"
 #include "core/ghostty_core.h"
-#include "window/main_window.h"
 
 #include <QGuiApplication>
 #include <QKeyEvent>
@@ -9,17 +8,11 @@
 #include <QFocusEvent>
 #include <QOpenGLContext>
 #include <QSurfaceFormat>
-#include <QFontDatabase>
 #include <QDebug>
-#include <QMenu>
-#include <QAction>
 #include <QDesktopServices>
 #include <QUrl>
 #include <QFileInfo>
 #include <QDir>
-#include <QClipboard>
-#include <KSharedConfig>
-#include <KConfigGroup>
 #include <KLocalizedString>
 
 #include <EGL/egl.h>
@@ -33,10 +26,6 @@
 #define EGL_DMA_BUF_PLANE0_PITCH_EXT 0x3274
 #define EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT 0x3443
 #define EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT 0x3444
-#endif
-
-#ifndef GL_TEXTURE_EXTERNAL_OES
-#define GL_TEXTURE_EXTERNAL_OES 0x8D65
 #endif
 
 typedef EGLImageKHR (*PFNEGLCREATEIMAGEKHRPROC)(EGLDisplay, EGLContext, EGLenum, EGLClientBuffer, const EGLint*);
@@ -78,22 +67,6 @@ TerminalSurface::TerminalSurface(QWidget* parent, const QString& workingDirector
     QByteArray wdUtf8 = effectiveDir.toUtf8();
     config.working_directory = wdUtf8.constData();
     m_currentPwd = effectiveDir;
-
-    // Dedicated Khostty font configuration from khosttyrc
-    KConfigGroup fontGroup(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("Font"));
-    bool useSystemFixed = fontGroup.readEntry("UseSystemFixedFont", true);
-    if (useSystemFixed) {
-        QFont sysFixed = QFontDatabase::systemFont(QFontDatabase::FixedFont);
-        float pt = static_cast<float>(sysFixed.pointSizeF());
-        if (pt <= 0.0f) pt = static_cast<float>(sysFixed.pointSize());
-        if (pt <= 0.0f) pt = 10.0f;
-        config.font_size = pt;
-    } else {
-        float customSize = fontGroup.readEntry("FontSize", 0.0f);
-        if (customSize > 0.0f) {
-            config.font_size = customSize;
-        }
-    }
 
     m_surface = ghostty_surface_new(app, &config);
     if (!m_surface) {
@@ -539,7 +512,7 @@ void TerminalSurface::mousePressEvent(QMouseEvent* event) {
 
     // Ctrl+Click on detected URL immediately opens it
     if (event->button() == Qt::LeftButton && (event->modifiers() & Qt::ControlModifier) && !m_hoveredUrl.isEmpty()) {
-        QDesktopServices::openUrl(QUrl::fromUserInput(m_hoveredUrl));
+        openExternalUrl(m_hoveredUrl);
         event->accept();
         return;
     }
@@ -547,7 +520,7 @@ void TerminalSurface::mousePressEvent(QMouseEvent* event) {
     if (event->button() == Qt::RightButton) {
         bool mouseCaptured = ghostty_surface_mouse_captured(m_surface);
         if (!mouseCaptured || (event->modifiers() & Qt::ShiftModifier)) {
-            showContextMenu(event->globalPosition().toPoint());
+            emit contextMenuRequested(event->globalPosition().toPoint(), m_hoveredUrl);
             event->accept();
             return;
         }
@@ -664,16 +637,27 @@ QVariant TerminalSurface::inputMethodQuery(Qt::InputMethodQuery query) const {
     return QOpenGLWidget::inputMethodQuery(query);
 }
 
-void TerminalSurface::pasteText(const QString& text) {
-    if (!m_surface || text.isEmpty()) return;
-    QByteArray utf8 = text.toUtf8();
-    ghostty_surface_paste_text(m_surface, utf8.constData(), static_cast<uintptr_t>(utf8.size()));
+bool TerminalSurface::performBindingAction(std::string_view action) {
+    if (!m_surface || action.empty()) return false;
+    return ghostty_surface_binding_action(
+        m_surface,
+        action.data(),
+        static_cast<uintptr_t>(action.size()));
 }
 
-void TerminalSurface::sendText(const QString& text) {
-    if (!m_surface || text.isEmpty()) return;
-    QByteArray utf8 = text.toUtf8();
-    ghostty_surface_text(m_surface, utf8.constData(), static_cast<uintptr_t>(utf8.size()));
+bool TerminalSurface::isAllowedExternalUrl(const QUrl& url) {
+    if (!url.isValid() || url.isRelative()) {
+        return false;
+    }
+    const QString scheme = url.scheme().toLower();
+    return scheme == QLatin1String("http") ||
+           scheme == QLatin1String("https") ||
+           scheme == QLatin1String("mailto");
+}
+
+bool TerminalSurface::openExternalUrl(const QString& rawUrl) {
+    const QUrl url = QUrl::fromUserInput(rawUrl);
+    return isAllowedExternalUrl(url) && QDesktopServices::openUrl(url);
 }
 
 QString TerminalSurface::processName() const {
@@ -734,10 +718,18 @@ bool TerminalSurface::handleAction(const ghostty_action_s& action) {
             return true;
 
         case GHOSTTY_ACTION_OPEN_URL:
-            if (action.action.open_url.url) {
-                QString urlStr = QString::fromUtf8(action.action.open_url.url);
-                QDesktopServices::openUrl(QUrl::fromUserInput(urlStr));
+            if (action.action.open_url.url && action.action.open_url.len > 0) {
+                QString urlStr = QString::fromUtf8(
+                    action.action.open_url.url,
+                    static_cast<qsizetype>(action.action.open_url.len));
+                if (action.action.open_url.kind == GHOSTTY_ACTION_OPEN_URL_KIND_TEXT ||
+                    action.action.open_url.kind == GHOSTTY_ACTION_OPEN_URL_KIND_HTML) {
+                    QDesktopServices::openUrl(QUrl::fromLocalFile(urlStr));
+                } else {
+                    openExternalUrl(urlStr);
+                }
             }
+            // Always return true so libghostty does not fall back to xdg-open on disallowed schemes.
             return true;
 
         case GHOSTTY_ACTION_MOUSE_SHAPE:
@@ -746,8 +738,16 @@ bool TerminalSurface::handleAction(const ghostty_action_s& action) {
 
         case GHOSTTY_ACTION_MOUSE_OVER_LINK:
             if (action.action.mouse_over_link.url && action.action.mouse_over_link.len > 0) {
-                m_hoveredUrl = QString::fromUtf8(action.action.mouse_over_link.url, action.action.mouse_over_link.len);
-                setCursor(Qt::PointingHandCursor);
+                QString candidate = QString::fromUtf8(
+                    action.action.mouse_over_link.url,
+                    static_cast<qsizetype>(action.action.mouse_over_link.len));
+                if (isAllowedExternalUrl(QUrl::fromUserInput(candidate))) {
+                    m_hoveredUrl = candidate;
+                    setCursor(Qt::PointingHandCursor);
+                } else {
+                    m_hoveredUrl.clear();
+                    setCursor(Qt::IBeamCursor);
+                }
             } else {
                 m_hoveredUrl.clear();
                 setCursor(Qt::IBeamCursor);
@@ -755,11 +755,11 @@ bool TerminalSurface::handleAction(const ghostty_action_s& action) {
             return true;
 
         case GHOSTTY_ACTION_SEARCH_TOTAL:
-            emit searchStatsChanged(static_cast<int>(action.action.search_total.total), -1);
+            emit searchTotalChanged(static_cast<int>(action.action.search_total.total));
             return true;
 
         case GHOSTTY_ACTION_SEARCH_SELECTED:
-            emit searchStatsChanged(-1, static_cast<int>(action.action.search_selected.selected));
+            emit searchSelectedChanged(static_cast<int>(action.action.search_selected.selected));
             return true;
 
         case GHOSTTY_ACTION_COMMAND_FINISHED:
@@ -774,12 +774,17 @@ bool TerminalSurface::handleAction(const ghostty_action_s& action) {
             return true;
 
         case GHOSTTY_ACTION_NEW_TAB:
-            emit GhosttyCore::instance().newTabRequested();
+            emit newTabRequested();
             return true;
 
-        case GHOSTTY_ACTION_NEW_SPLIT:
-            emit newSplitRequested(action.action.new_split);
+        case GHOSTTY_ACTION_NEW_SPLIT: {
+            const auto dir = action.action.new_split;
+            emit splitRequested((dir == GHOSTTY_SPLIT_DIRECTION_DOWN ||
+                                 dir == GHOSTTY_SPLIT_DIRECTION_UP)
+                                    ? Qt::Vertical
+                                    : Qt::Horizontal);
             return true;
+        }
 
         case GHOSTTY_ACTION_GOTO_SPLIT:
             emit gotoSplitRequested(action.action.goto_split);
@@ -817,139 +822,17 @@ bool TerminalSurface::handleAction(const ghostty_action_s& action) {
             return true;
 
         case GHOSTTY_ACTION_RELOAD_CONFIG:
-            if (action.action.reload_config.soft) {
-                if (GhosttyCore::instance().app() && GhosttyCore::instance().config()) {
-                    ghostty_app_update_config(GhosttyCore::instance().app(), GhosttyCore::instance().config());
-                    emit GhosttyCore::instance().configChanged();
-                }
-            } else {
-                GhosttyCore::instance().reloadConfig();
-            }
+            GhosttyCore::instance().reloadConfig(action.action.reload_config.soft);
+            return true;
+
+        case GHOSTTY_ACTION_CONFIG_CHANGE:
+            QMetaObject::invokeMethod(this, "update", Qt::QueuedConnection);
             return true;
 
         default:
             break;
     }
     return false;
-}
-
-void TerminalSurface::showContextMenu(const QPoint& globalPos) {
-    QMenu menu(this);
-
-    // 1. Hyperlink actions (if hovering over a URL)
-    if (!m_hoveredUrl.isEmpty()) {
-        QAction* openLinkAction = menu.addAction(QIcon::fromTheme(QStringLiteral("internet-services")), i18n("Open Link"));
-        connect(openLinkAction, &QAction::triggered, this, [this]() {
-            QDesktopServices::openUrl(QUrl::fromUserInput(m_hoveredUrl));
-        });
-
-        QAction* copyLinkAction = menu.addAction(QIcon::fromTheme(QStringLiteral("edit-copy")), i18n("Copy Link Address"));
-        connect(copyLinkAction, &QAction::triggered, this, [this]() {
-            QGuiApplication::clipboard()->setText(m_hoveredUrl);
-        });
-        menu.addSeparator();
-    }
-
-    // 2. Clipboard actions with KDE icons & standard shortcuts
-    QAction* copyAction = menu.addAction(QIcon::fromTheme(QStringLiteral("edit-copy")), i18n("&Copy"));
-    copyAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C));
-    bool hasSelection = m_surface && ghostty_surface_has_selection(m_surface);
-    copyAction->setEnabled(hasSelection);
-    connect(copyAction, &QAction::triggered, this, [this]() {
-        if (m_surface) {
-            ghostty_surface_binding_action(m_surface, "copy_to_clipboard", 17);
-        }
-    });
-
-    QAction* pasteAction = menu.addAction(QIcon::fromTheme(QStringLiteral("edit-paste")), i18n("&Paste"));
-    pasteAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_V));
-    connect(pasteAction, &QAction::triggered, this, [this]() {
-        if (m_surface) {
-            ghostty_surface_binding_action(m_surface, "paste_from_clipboard", 21);
-        }
-    });
-
-    menu.addSeparator();
-
-    // 3. Open in File Manager (Konsole integration)
-    QString cwd = currentWorkingDirectory();
-    QAction* openFolderAction = menu.addAction(QIcon::fromTheme(QStringLiteral("system-file-manager")), i18n("Open File Manager"));
-    openFolderAction->setToolTip(cwd);
-    connect(openFolderAction, &QAction::triggered, this, [cwd]() {
-        QDesktopServices::openUrl(QUrl::fromLocalFile(cwd));
-    });
-
-    menu.addSeparator();
-
-    // 4. Clear Scrollback
-    QAction* clearAction = menu.addAction(QIcon::fromTheme(QStringLiteral("edit-clear")), i18n("Clear Scrollback"));
-    clearAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_K));
-    connect(clearAction, &QAction::triggered, this, [this]() {
-        if (m_surface) {
-            ghostty_surface_binding_action(m_surface, "clear_screen", 12);
-        }
-    });
-
-    menu.addSeparator();
-
-    // 5. Split View Submenu
-    auto* mainWin = qobject_cast<MainWindow*>(window());
-    QMenu* splitSubmenu = menu.addMenu(QIcon::fromTheme(QStringLiteral("view-split-left-right")), i18n("Split View"));
-
-    QAction* splitRight = splitSubmenu->addAction(QIcon::fromTheme(QStringLiteral("view-split-left-right")), i18n("Split &Right"));
-    splitRight->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
-    connect(splitRight, &QAction::triggered, this, [this]() {
-        emit splitRequested(Qt::Horizontal);
-    });
-
-    QAction* splitDown = splitSubmenu->addAction(QIcon::fromTheme(QStringLiteral("view-split-top-bottom")), i18n("Split &Down"));
-    splitDown->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_E));
-    connect(splitDown, &QAction::triggered, this, [this]() {
-        emit splitRequested(Qt::Vertical);
-    });
-
-    splitSubmenu->addSeparator();
-
-    QAction* zoomSplit = splitSubmenu->addAction(QIcon::fromTheme(QStringLiteral("zoom-fit-best")), i18n("Toggle Split Zoom"));
-    zoomSplit->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Return));
-    connect(zoomSplit, &QAction::triggered, this, [mainWin]() {
-        if (mainWin) mainWin->toggleSplitZoom();
-    });
-
-    QAction* equalizeSplits = splitSubmenu->addAction(QIcon::fromTheme(QStringLiteral("view-restore")), i18n("Equalize Splits"));
-    equalizeSplits->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_Equal));
-    connect(equalizeSplits, &QAction::triggered, this, [mainWin]() {
-        if (mainWin) mainWin->equalizeSplits();
-    });
-
-    splitSubmenu->addSeparator();
-
-    QAction* closeSplit = splitSubmenu->addAction(QIcon::fromTheme(QStringLiteral("window-close")), i18n("Close Split"));
-    closeSplit->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_W));
-    connect(closeSplit, &QAction::triggered, this, &TerminalSurface::closeRequested);
-
-    // 6. Tabs & Windows
-    QAction* newTabAction = menu.addAction(QIcon::fromTheme(QStringLiteral("tab-new")), i18n("New &Tab"));
-    newTabAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_T));
-    connect(newTabAction, &QAction::triggered, this, [mainWin]() {
-        if (mainWin) mainWin->newTab();
-    });
-
-    QAction* newWinAction = menu.addAction(QIcon::fromTheme(QStringLiteral("window-new")), i18n("New &Window"));
-    newWinAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_N));
-    connect(newWinAction, &QAction::triggered, this, [mainWin]() {
-        if (mainWin) mainWin->newWindow();
-    });
-
-    menu.addSeparator();
-
-    // 7. Configure Khostty
-    QAction* configAction = menu.addAction(QIcon::fromTheme(QStringLiteral("preferences-system")), i18n("Configure Khostty..."));
-    connect(configAction, &QAction::triggered, this, [mainWin]() {
-        if (mainWin) mainWin->showPreferencesDialog();
-    });
-
-    menu.exec(globalPos);
 }
 
 Qt::CursorShape TerminalSurface::mapGhosttyMouseShape(ghostty_action_mouse_shape_e shape) {
@@ -995,52 +878,19 @@ Qt::CursorShape TerminalSurface::mapGhosttyMouseShape(ghostty_action_mouse_shape
 }
 
 void TerminalSurface::startSearch(const QString& needle) {
-    if (!m_surface) return;
     QByteArray actionStr = QStringLiteral("search:%1").arg(needle).toUtf8();
-    ghostty_surface_binding_action(m_surface, actionStr.constData(), static_cast<uintptr_t>(actionStr.size()));
+    performBindingAction(std::string_view(actionStr.constData(), static_cast<size_t>(actionStr.size())));
 }
 
 void TerminalSurface::navigateSearch(bool next) {
-    if (!m_surface) return;
-    const char* actionStr = next ? "navigate_search:next" : "navigate_search:previous";
-    ghostty_surface_binding_action(m_surface, actionStr, static_cast<uintptr_t>(strlen(actionStr)));
+    performBindingAction(next ? "navigate_search:next" : "navigate_search:previous");
 }
 
 void TerminalSurface::endSearch() {
-    if (!m_surface) return;
-    const char* actionStr = "end_search";
-    ghostty_surface_binding_action(m_surface, actionStr, static_cast<uintptr_t>(strlen(actionStr)));
+    performBindingAction("end_search");
 }
 
 void TerminalSurface::handleProcessExited(bool exited) {
     Q_UNUSED(exited);
     emit closeRequested();
-}
-
-void TerminalSurface::setFontSize(float points) {
-    if (!m_surface || points <= 0.0f) return;
-    QByteArray actionStr = QStringLiteral("set_font_size:%1").arg(points).toUtf8();
-    ghostty_surface_binding_action(m_surface, actionStr.constData(), static_cast<uintptr_t>(actionStr.size()));
-}
-
-void TerminalSurface::applyFontConfig() {
-    if (!m_surface) return;
-
-    KConfigGroup fontGroup(KSharedConfig::openConfig(QStringLiteral("khosttyrc")), QStringLiteral("Font"));
-    bool useSystemFixed = fontGroup.readEntry("UseSystemFixedFont", true);
-    if (useSystemFixed) {
-        QFont sysFixed = QFontDatabase::systemFont(QFontDatabase::FixedFont);
-        float pt = static_cast<float>(sysFixed.pointSizeF());
-        if (pt <= 0.0f) pt = static_cast<float>(sysFixed.pointSize());
-        if (pt <= 0.0f) pt = 10.0f;
-        setFontSize(pt);
-    } else {
-        float customSize = fontGroup.readEntry("FontSize", 0.0f);
-        if (customSize > 0.0f) {
-            setFontSize(customSize);
-        } else {
-            // Reset to Ghostty original font size (from ~/.config/ghostty/config or default)
-            ghostty_surface_binding_action(m_surface, "reset_font_size", 15);
-        }
-    }
 }

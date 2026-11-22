@@ -17,6 +17,54 @@
 #include <QToolButton>
 #include <QWheelEvent>
 #include <algorithm>
+#include <cmath>
+
+namespace {
+constexpr int kMinPaneWidth = 200;
+constexpr int kMinColumnWidth = 280;
+constexpr int kSeparatorWidth = 8;
+constexpr double kDefaultColumnRatio = 0.5;
+constexpr double kMaxColumnRatio = 0.9;
+
+int computeColumnWidth(double ratio, int viewportW) {
+  const int minW = WorklaneView::minColumnWidth(viewportW);
+  const int maxW = WorklaneView::maxColumnWidth(viewportW);
+  if (viewportW <= 0) {
+    return minW;
+  }
+  const int desired =
+      static_cast<int>(ratio * viewportW + 1e-9) - kSeparatorWidth;
+  return std::clamp(desired, minW, maxW);
+}
+
+void equalizeColumn(KhosttySplitter *col) {
+  if (!col)
+    return;
+  const int count = col->count();
+  if (count <= 0)
+    return;
+  const int part = std::max(1, col->height() / count);
+  QList<int> sizes(count, part);
+  col->setSizes(sizes);
+}
+
+QString resolveSplitDir(const QString &initialDir, TerminalSurface *fallback,
+                        bool allowInherit) {
+  QString dir = initialDir.trimmed();
+  if (!dir.isEmpty()) {
+    return dir;
+  }
+  if (allowInherit && fallback) {
+    KConfigGroup genCfg(
+        KSharedConfig::openConfig(QStringLiteral("khosttyrc")),
+        QStringLiteral("General"));
+    if (genCfg.readEntry("NewSplitInheritsPwd", true)) {
+      dir = fallback->currentWorkingDirectory();
+    }
+  }
+  return dir.isEmpty() ? QDir::homePath() : dir;
+}
+} // namespace
 
 WorklaneView::WorklaneView(QWidget *parent, const QString &initialDir)
     : QScrollArea(parent) {
@@ -24,6 +72,7 @@ WorklaneView::WorklaneView(QWidget *parent, const QString &initialDir)
   setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
   setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
   setFrameShape(QFrame::NoFrame);
+  setMinimumWidth(kMinPaneWidth);
 
   m_canvas = new QWidget(viewport());
   m_canvasLayout = new QHBoxLayout(m_canvas);
@@ -200,8 +249,8 @@ TerminalPane *WorklaneView::detachSurface(TerminalSurface *surface) {
   if (!pane || !colSplitter)
     return nullptr;
 
-  if (m_isZoomed) {
-    toggleSplitZoom();
+  if (m_zoomedPane) {
+    unzoom();
   }
 
   surface->removeEventFilter(this);
@@ -245,20 +294,13 @@ TerminalPane *WorklaneView::detachSurface(TerminalSurface *surface) {
 
   if (colSplitter->count() == 0) {
     m_columns.removeOne(colSplitter);
+    m_columnRatios.remove(colSplitter);
     colSplitter->hide();
     colSplitter->setParent(nullptr);
     colSplitter->deleteLater();
     rebuildCanvasLayout();
   } else {
-    int count = colSplitter->count();
-    if (count > 0) {
-      int totalH = colSplitter->height();
-      int part = std::max(1, totalH / count);
-      QList<int> sizes;
-      for (int i = 0; i < count; ++i)
-        sizes << part;
-      colSplitter->setSizes(sizes);
-    }
+    equalizeColumn(colSplitter);
     updateCanvasLayout();
   }
   updatePaneDecorations();
@@ -287,14 +329,10 @@ TerminalPane *WorklaneView::detachSurface(TerminalSurface *surface) {
 void WorklaneView::attachPaneAsColumn(TerminalPane *pane, int colIndex) {
   if (!pane || !pane->surface())
     return;
-  if (m_isZoomed)
-    toggleSplitZoom();
-
-  int viewportW = viewport()->width();
-  int viewportH = viewport()->height();
+  if (m_zoomedPane)
+    unzoom();
 
   auto *colSplitter = new KhosttySplitter(Qt::Vertical, m_canvas);
-  colSplitter->setMinimumHeight(std::max(100, viewportH));
 
   pane->setParent(colSplitter);
   setupSurface(pane->surface());
@@ -303,12 +341,14 @@ void WorklaneView::attachPaneAsColumn(TerminalPane *pane, int colIndex) {
   pane->show();
 
   if (m_columns.isEmpty()) {
-    colSplitter->setFixedWidth(std::max(400, viewportW));
+    m_columnRatios.insert(colSplitter, kDefaultColumnRatio);
     m_columns.append(colSplitter);
   } else {
-    int maxAllowed = std::max(280, static_cast<int>(viewportW * 0.90));
-    int colW = std::clamp(static_cast<int>(viewportW * 0.50), 350, maxAllowed);
-    colSplitter->setFixedWidth(colW);
+    if (m_columns.size() == 1) {
+      // Transitioning from single full-width column to multi-column starts 50/50.
+      m_columnRatios[m_columns[0]] = kDefaultColumnRatio;
+    }
+    m_columnRatios.insert(colSplitter, kDefaultColumnRatio);
     int insertIdx = std::clamp(colIndex, 0, static_cast<int>(m_columns.size()));
     m_columns.insert(insertIdx, colSplitter);
   }
@@ -329,8 +369,8 @@ void WorklaneView::attachPaneToColumn(TerminalPane *pane, int colIndex,
     attachPaneAsColumn(pane, 0);
     return;
   }
-  if (m_isZoomed)
-    toggleSplitZoom();
+  if (m_zoomedPane)
+    unzoom();
 
   int validColIdx =
       std::clamp(colIndex, 0, static_cast<int>(m_columns.size() - 1));
@@ -344,21 +384,8 @@ void WorklaneView::attachPaneToColumn(TerminalPane *pane, int colIndex,
   colSplitter->insertWidget(validRowIdx, pane);
   pane->show();
 
-  int count = colSplitter->count();
-  if (count > 0) {
-    int totalHeight = colSplitter->height();
-    int part = std::max(1, totalHeight / count);
-    QList<int> sizes;
-    for (int i = 0; i < count; ++i)
-      sizes << part;
-    colSplitter->setSizes(sizes);
-  }
-
-  if (m_columns.size() == 1) {
-    rebuildCanvasLayout();
-  } else {
-    updateCanvasLayout();
-  }
+  equalizeColumn(colSplitter);
+  updateCanvasLayout();
   updatePaneDecorations();
   emit layoutChanged();
 
@@ -387,6 +414,24 @@ void WorklaneView::updateScrollBarPolicy() {
   }
 }
 
+QString WorklaneView::formatPositionTag(int colIdx, int colCount, int rowIdx,
+                                        int rowCount) {
+  if (colCount > 1) {
+    if (rowCount > 1) {
+      return QStringLiteral("Col %1/%2 · %3/%4")
+          .arg(colIdx + 1)
+          .arg(colCount)
+          .arg(rowIdx + 1)
+          .arg(rowCount);
+    }
+    return QStringLiteral("Col %1/%2").arg(colIdx + 1).arg(colCount);
+  }
+  if (rowCount > 1) {
+    return QStringLiteral("Split %1/%2").arg(rowIdx + 1).arg(rowCount);
+  }
+  return QString();
+}
+
 void WorklaneView::updatePaneDecorations() {
   KConfigGroup appearanceConfig(
       KSharedConfig::openConfig(QStringLiteral("khosttyrc")),
@@ -406,29 +451,43 @@ void WorklaneView::updatePaneDecorations() {
       if (auto *pane = qobject_cast<TerminalPane *>(col->widget(rowIdx))) {
         pane->setHeaderVisible(showHeader);
         pane->setBorderVisible(split);
-
-        if (numCols > 1) {
-          QString posText;
-          if (rowCount > 1) {
-            posText = QStringLiteral("Col %1/%2 · %3/%4")
-                          .arg(colIdx + 1)
-                          .arg(numCols)
-                          .arg(rowIdx + 1)
-                          .arg(rowCount);
-          } else {
-            posText = QStringLiteral("Col %1/%2").arg(colIdx + 1).arg(numCols);
-          }
-          pane->setPositionText(posText);
-        } else if (rowCount > 1) {
-          pane->setPositionText(
-              QStringLiteral("Split %1/%2").arg(rowIdx + 1).arg(rowCount));
-        } else {
-          pane->setPositionText(QString());
-        }
+        pane->setPositionText(
+            formatPositionTag(colIdx, numCols, rowIdx, rowCount));
       }
     }
   }
   updateScrollBarPolicy();
+}
+
+int WorklaneView::maxColumnWidth(int viewportW) {
+  if (viewportW <= 0) {
+    return kMinColumnWidth;
+  }
+  return std::max(kMinPaneWidth,
+                  static_cast<int>(viewportW * kMaxColumnRatio));
+}
+
+int WorklaneView::minColumnWidth(int viewportW) {
+  return std::min(kMinColumnWidth, maxColumnWidth(viewportW));
+}
+
+void WorklaneView::setColumnWidth(KhosttySplitter *col, int width) {
+  if (!col || !m_columns.contains(col) || m_columns.size() <= 1) {
+    return;
+  }
+  const int viewportW = viewport()->width();
+  if (viewportW <= 0) {
+    return;
+  }
+  const int minW = minColumnWidth(viewportW);
+  const int maxW = maxColumnWidth(viewportW);
+  if (minW >= maxW) {
+    return;
+  }
+  const int clampedW = std::clamp(width, minW, maxW);
+  m_columnRatios[col] =
+      static_cast<double>(clampedW + kSeparatorWidth) / viewportW;
+  updateCanvasLayout();
 }
 
 void WorklaneView::rebuildCanvasLayout() {
@@ -449,40 +508,20 @@ void WorklaneView::rebuildCanvasLayout() {
     return;
   }
 
-  int viewportW = viewport()->width();
-  bool splitPresent = hasAnySplit();
-  int maxAllowed = splitPresent
-                       ? std::max(280, static_cast<int>(viewportW * 0.90))
-                       : viewportW;
-
   if (m_columns.size() == 1) {
     auto *col = m_columns[0];
-    if (splitPresent) {
-      if (col->width() > maxAllowed) {
-        col->setFixedWidth(maxAllowed);
-      }
-      m_canvasLayout->addWidget(col);
-
-      auto *sep = new WorklaneSeparator(col, this, m_canvas);
-      m_separators.append(sep);
-      m_canvasLayout->addWidget(sep);
-    } else {
-      col->setMinimumWidth(200);
-      col->setMaximumWidth(QWIDGETSIZE_MAX);
-      m_canvasLayout->addWidget(col, 1);
-    }
+    col->setMinimumWidth(kMinPaneWidth);
+    col->setMaximumWidth(QWIDGETSIZE_MAX);
+    m_canvasLayout->addWidget(col, 1);
   } else {
-    for (int i = 0; i < m_columns.size(); ++i) {
-      auto *col = m_columns[i];
-      if (col->width() > maxAllowed) {
-        col->setFixedWidth(maxAllowed);
-      }
+    for (auto *col : m_columns) {
       m_canvasLayout->addWidget(col);
 
       auto *sep = new WorklaneSeparator(col, this, m_canvas);
       m_separators.append(sep);
       m_canvasLayout->addWidget(sep);
     }
+    m_canvasLayout->addStretch(1);
   }
 
   updateCanvasLayout();
@@ -493,35 +532,54 @@ void WorklaneView::rebuildCanvasLayout() {
 void WorklaneView::updateCanvasLayout() {
   int viewportW = viewport()->width();
   int viewportH = viewport()->height();
+  if (viewportW <= 0 || viewportH <= 0) {
+    return;
+  }
 
   int totalW = 0;
-  bool splitPresent = hasAnySplit();
-  int maxAllowed = splitPresent
-                       ? std::max(280, static_cast<int>(viewportW * 0.90))
-                       : viewportW;
 
-  if (!splitPresent && m_columns.size() == 1) {
+  if (m_columns.size() == 1) {
     auto *col = m_columns[0];
-    col->setMinimumWidth(200);
+    col->setMinimumWidth(kMinPaneWidth);
     col->setMaximumWidth(QWIDGETSIZE_MAX);
     col->setFixedHeight(viewportH);
     totalW = viewportW;
   } else {
+    QList<int> colWidths;
+    colWidths.reserve(m_columns.size());
+    double totalRatio = 0.0;
+
     for (auto *col : m_columns) {
-      if (splitPresent && col->width() > maxAllowed) {
-        col->setFixedWidth(maxAllowed);
+      const double ratio = m_columnRatios.value(col, kDefaultColumnRatio);
+      totalRatio += ratio;
+      const int colW = computeColumnWidth(ratio, viewportW);
+      colWidths.append(colW);
+      totalW += colW;
+    }
+    totalW += static_cast<int>(m_separators.size()) * kSeparatorWidth;
+
+    if (!colWidths.isEmpty() && std::abs(totalRatio - 1.0) < 1e-6) {
+      const int rem = viewportW - totalW;
+      if (rem > 0 && rem < colWidths.size() &&
+          colWidths.last() + rem <= maxColumnWidth(viewportW)) {
+        colWidths.last() += rem;
+        totalW += rem;
       }
-      col->setFixedHeight(viewportH);
-      totalW += col->width();
+    }
+
+    for (int i = 0; i < m_columns.size(); ++i) {
+      m_columns[i]->setFixedWidth(colWidths[i]);
+      m_columns[i]->setFixedHeight(viewportH);
     }
     for (auto *sep : m_separators) {
       sep->setFixedHeight(viewportH);
-      totalW += sep->width();
     }
   }
 
   int finalW = std::max(totalW, viewportW);
   m_canvas->setFixedSize(finalW, viewportH);
+  m_canvasLayout->invalidate();
+  m_canvasLayout->activate();
 }
 
 void WorklaneView::resizeEvent(QResizeEvent *event) {
@@ -559,32 +617,19 @@ void WorklaneView::setupSurface(TerminalSurface *surface) {
             }
           });
 
-  connect(surface, &TerminalSurface::searchStatsChanged, this,
-          [this, surface](int total, int selected) {
-            if (surface == m_activeSurface && m_searchCountLabel) {
-              if (total >= 0)
-                m_searchTotal = total;
-              if (selected >= 0)
-                m_searchSelected = selected;
-              if (m_searchTotal <= 0) {
-                m_searchCountLabel->setText(
-                    m_searchEdit && m_searchEdit->text().isEmpty()
-                        ? QString()
-                        : i18n("No matches"));
-              } else {
-                m_searchCountLabel->setText(
-                    i18n("%1 of %2", m_searchSelected + 1, m_searchTotal));
-              }
+  connect(surface, &TerminalSurface::searchTotalChanged, this,
+          [this, surface](int total) {
+            if (surface == m_activeSurface) {
+              m_searchTotal = total;
+              updateSearchCountLabel();
             }
           });
 
-  connect(surface, &TerminalSurface::newSplitRequested, this,
-          [this](ghostty_action_split_direction_e dir) {
-            if (dir == GHOSTTY_SPLIT_DIRECTION_DOWN ||
-                dir == GHOSTTY_SPLIT_DIRECTION_UP) {
-              splitCurrentVertical();
-            } else {
-              addColumn();
+  connect(surface, &TerminalSurface::searchSelectedChanged, this,
+          [this, surface](int selected) {
+            if (surface == m_activeSurface) {
+              m_searchSelected = selected;
+              updateSearchCountLabel();
             }
           });
 
@@ -623,8 +668,7 @@ void WorklaneView::setupPane(TerminalPane *pane) {
       closeSurface(pane->surface());
     }
   });
-  connect(pane, &TerminalPane::unzoomRequested, this,
-          &WorklaneView::toggleSplitZoom);
+  connect(pane, &TerminalPane::unzoomRequested, this, &WorklaneView::unzoom);
 }
 
 TerminalSurface *WorklaneView::addColumn(const QString &initialDir) {
@@ -634,60 +678,20 @@ TerminalSurface *WorklaneView::addColumn(const QString &initialDir) {
 
 TerminalSurface *WorklaneView::addColumnAfter(KhosttySplitter *targetCol,
                                               const QString &initialDir) {
-  int viewportW = viewport()->width();
-  int viewportH = viewport()->height();
+  QString dir =
+      resolveSplitDir(initialDir, m_activeSurface, !m_columns.isEmpty());
 
-  auto *colSplitter = new KhosttySplitter(Qt::Vertical, m_canvas);
-  colSplitter->setMinimumHeight(std::max(100, viewportH));
-
-  QString dir = initialDir.trimmed();
-  if (dir.isEmpty()) {
-    if (!m_columns.isEmpty()) {
-      KConfigGroup genCfg(
-          KSharedConfig::openConfig(QStringLiteral("khosttyrc")),
-          QStringLiteral("General"));
-      bool inherit = genCfg.readEntry("NewSplitInheritsPwd", true);
-      if (inherit && m_activeSurface) {
-        dir = m_activeSurface->currentWorkingDirectory();
-      }
-    }
-    if (dir.isEmpty()) {
-      dir = QDir::homePath();
+  int insertIdx = m_columns.size();
+  if (targetCol) {
+    int idx = m_columns.indexOf(targetCol);
+    if (idx != -1) {
+      insertIdx = idx + 1;
     }
   }
 
-  auto *surface = new TerminalSurface(colSplitter, dir);
-  setupSurface(surface);
-
-  auto *pane = new TerminalPane(surface, colSplitter);
-  setupPane(pane);
-  colSplitter->addWidget(pane);
-
-  if (m_columns.isEmpty()) {
-    colSplitter->setFixedWidth(std::max(400, viewportW));
-    m_columns.append(colSplitter);
-  } else {
-    int maxAllowed = std::max(280, static_cast<int>(viewportW * 0.90));
-    int colW = std::clamp(static_cast<int>(viewportW * 0.50), 350, maxAllowed);
-    colSplitter->setFixedWidth(colW);
-
-    int insertIdx = m_columns.size();
-    if (targetCol) {
-      int idx = m_columns.indexOf(targetCol);
-      if (idx != -1) {
-        insertIdx = idx + 1;
-      }
-    }
-    m_columns.insert(insertIdx, colSplitter);
-  }
-
-  rebuildCanvasLayout();
-
-  emit layoutChanged();
-
-  setActiveSurface(surface);
-  surface->setFocus();
-  ensureSurfaceVisible(surface);
+  auto *surface = new TerminalSurface(m_canvas, dir);
+  auto *pane = new TerminalPane(surface, m_canvas);
+  attachPaneAsColumn(pane, insertIdx);
   return surface;
 }
 
@@ -709,59 +713,15 @@ TerminalSurface *WorklaneView::splitVertical(TerminalSurface *target,
     return addColumn(initialDir);
   }
 
-  QString dir = initialDir.trimmed();
-  if (dir.isEmpty()) {
-    KConfigGroup genCfg(KSharedConfig::openConfig(QStringLiteral("khosttyrc")),
-                        QStringLiteral("General"));
-    bool inherit = genCfg.readEntry("NewSplitInheritsPwd", true);
-    if (inherit) {
-      TerminalSurface *baseSurface = target ? target : m_activeSurface;
-      if (baseSurface) {
-        dir = baseSurface->currentWorkingDirectory();
-      }
-    }
-    if (dir.isEmpty()) {
-      dir = QDir::homePath();
-    }
-  }
-
-  auto *surface = new TerminalSurface(splitter, dir);
-  setupSurface(surface);
-
-  auto *pane = new TerminalPane(surface, splitter);
-  setupPane(pane);
-
+  QString dir = resolveSplitDir(initialDir, target, true);
+  int colIdx = m_columns.indexOf(splitter);
   TerminalPane *currentPane = findPaneForSurface(target);
-  int idx = currentPane ? splitter->indexOf(currentPane) : -1;
-  if (idx != -1) {
-    splitter->insertWidget(idx + 1, pane);
-  } else {
-    splitter->addWidget(pane);
-  }
+  int rowIdx =
+      currentPane ? splitter->indexOf(currentPane) + 1 : splitter->count();
 
-  // Equalize vertical splits within this column
-  int count = splitter->count();
-  if (count > 1) {
-    int totalHeight = splitter->height();
-    int part = std::max(1, totalHeight / count);
-    QList<int> sizes;
-    for (int i = 0; i < count; ++i)
-      sizes << part;
-    splitter->setSizes(sizes);
-  }
-
-  if (m_columns.size() == 1) {
-    rebuildCanvasLayout();
-  } else {
-    updateCanvasLayout();
-  }
-  updatePaneDecorations();
-
-  emit layoutChanged();
-
-  setActiveSurface(surface);
-  surface->setFocus();
-  ensureSurfaceVisible(surface);
+  auto *surface = new TerminalSurface(m_canvas, dir);
+  auto *pane = new TerminalPane(surface, m_canvas);
+  attachPaneToColumn(pane, colIdx, rowIdx);
   return surface;
 }
 
@@ -772,92 +732,8 @@ void WorklaneView::closeActiveSurface() {
 }
 
 void WorklaneView::closeSurface(TerminalSurface *surface) {
-  if (!surface)
-    return;
-
-  TerminalPane *pane = findPaneForSurface(surface);
-  KhosttySplitter *colSplitter = findSplitterForSurface(surface);
-  if (!pane || !colSplitter)
-    return;
-
-  int savedScroll = horizontalScrollBar()->value();
-  bool wasActive = (m_activeSurface == surface);
-  if (wasActive) {
-    m_activeSurface = nullptr;
-  }
-
-  // Determine neighbor to focus if wasActive
-  TerminalSurface *nextSurface = nullptr;
-  int colIdx = m_columns.indexOf(colSplitter);
-  int paneIdx = colSplitter->indexOf(pane);
-
-  if (colSplitter->count() > 1) {
-    // Another pane in the same column
-    int nextPaneIdx =
-        (paneIdx + 1 < colSplitter->count()) ? (paneIdx + 1) : (paneIdx - 1);
-    if (nextPaneIdx >= 0 && nextPaneIdx < colSplitter->count()) {
-      if (auto *p =
-              qobject_cast<TerminalPane *>(colSplitter->widget(nextPaneIdx))) {
-        nextSurface = p->surface();
-      }
-    }
-  } else if (m_columns.size() > 1) {
-    // Entire column is closing; pick adjacent column
-    int nextColIdx =
-        (colIdx + 1 < m_columns.size()) ? (colIdx + 1) : (colIdx - 1);
-    if (nextColIdx >= 0 && nextColIdx < m_columns.size()) {
-      KhosttySplitter *nextCol = m_columns[nextColIdx];
-      if (nextCol->count() > 0) {
-        if (auto *p = qobject_cast<TerminalPane *>(nextCol->widget(0))) {
-          nextSurface = p->surface();
-        }
-      }
-    }
-  }
-
-  // Safely remove pane from splitter before scheduling deletion
-  pane->hide();
-  pane->setParent(nullptr);
-  pane->deleteLater();
-
-  if (colSplitter->count() == 0) {
-    m_columns.removeOne(colSplitter);
-    colSplitter->hide();
-    colSplitter->setParent(nullptr);
-    colSplitter->deleteLater();
-    rebuildCanvasLayout();
-  } else {
-    int count = colSplitter->count();
-    if (count > 0) {
-      int totalH = colSplitter->height();
-      int part = std::max(1, totalH / count);
-      QList<int> sizes;
-      for (int i = 0; i < count; ++i)
-        sizes << part;
-      colSplitter->setSizes(sizes);
-    }
-    updateCanvasLayout();
-  }
-  updatePaneDecorations();
-
-  emit layoutChanged();
-
-  // Restore scroll position
-  horizontalScrollBar()->setValue(savedScroll);
-
-  if (m_columns.isEmpty()) {
-    m_activeSurface = nullptr;
-    QTimer::singleShot(0, this, [this]() { emit empty(); });
-  } else if (wasActive) {
-    if (nextSurface) {
-      setActiveSurface(nextSurface);
-      nextSurface->setFocus();
-      ensureSurfaceVisible(nextSurface);
-    }
-  } else {
-    if (m_activeSurface) {
-      ensureSurfaceVisible(m_activeSurface);
-    }
+  if (TerminalPane *pane = detachSurface(surface)) {
+    pane->deleteLater();
   }
 }
 
@@ -901,6 +777,7 @@ void WorklaneView::focusUpSplit() {
   KhosttySplitter *splitter = findSplitterForSurface(m_activeSurface);
   if (!splitter || splitter->count() <= 1)
     return;
+  unzoom();
   TerminalPane *currentPane = findPaneForSurface(m_activeSurface);
   int idx = splitter->indexOf(currentPane);
   if (idx > 0) {
@@ -918,6 +795,7 @@ void WorklaneView::focusDownSplit() {
   KhosttySplitter *splitter = findSplitterForSurface(m_activeSurface);
   if (!splitter || splitter->count() <= 1)
     return;
+  unzoom();
   TerminalPane *currentPane = findPaneForSurface(m_activeSurface);
   int idx = splitter->indexOf(currentPane);
   if (idx >= 0 && idx < splitter->count() - 1) {
@@ -933,13 +811,24 @@ void WorklaneView::setActiveSurface(TerminalSurface *surface) {
   if (m_activeSurface == surface)
     return;
 
-  if (m_activeSurface) {
-    if (auto *oldPane = findPaneForSurface(m_activeSurface)) {
+  TerminalSurface *oldSurface = m_activeSurface;
+  const bool searchOpen = m_searchBar && m_searchBar->isVisible();
+  if (oldSurface) {
+    if (searchOpen) {
+      oldSurface->endSearch();
+    }
+    if (auto *oldPane = findPaneForSurface(oldSurface)) {
       oldPane->setActive(false);
     }
   }
 
   m_activeSurface = surface;
+
+  if (searchOpen) {
+    m_searchTotal = -1;
+    m_searchSelected = -1;
+    updateSearchCountLabel();
+  }
 
   if (m_activeSurface) {
     if (auto *newPane = findPaneForSurface(m_activeSurface)) {
@@ -949,6 +838,9 @@ void WorklaneView::setActiveSurface(TerminalSurface *surface) {
     emit activeSurfaceChanged(m_activeSurface);
     emit titleChanged(m_activeTitle);
     ensureSurfaceVisible(m_activeSurface);
+    if (searchOpen && m_searchEdit && !m_searchEdit->text().isEmpty()) {
+      m_activeSurface->startSearch(m_searchEdit->text());
+    }
   }
 }
 
@@ -956,40 +848,44 @@ void WorklaneView::equalizeSplits() {
   if (m_columns.isEmpty())
     return;
 
-  int viewportW = viewport()->width();
-  bool splitPresent = hasAnySplit();
-  int maxAllowed = splitPresent
-                       ? std::max(280, static_cast<int>(viewportW * 0.90))
-                       : viewportW;
-
-  if (m_columns.size() == 1) {
-    m_columns[0]->setFixedWidth(splitPresent ? maxAllowed : viewportW);
-  } else {
-    int count = static_cast<int>(m_columns.size());
-    int available = (viewportW - 8 * count) / count;
-    int equalW = std::min(maxAllowed, std::max(350, available));
+  if (m_columns.size() > 1) {
+    const double equalRatio = 1.0 / static_cast<double>(m_columns.size());
     for (auto *col : m_columns) {
-      col->setFixedWidth(equalW);
+      m_columnRatios[col] = equalRatio;
     }
   }
 
-  // Equalize vertical splits within each column
   for (auto *splitter : m_columns) {
-    int count = splitter->count();
-    if (count > 0) {
-      QList<int> sizes;
-      int total = splitter->height();
-      int part = std::max(1, total / count);
-      for (int i = 0; i < count; ++i)
-        sizes << part;
-      splitter->setSizes(sizes);
-    }
+    equalizeColumn(splitter);
   }
 
   updateCanvasLayout();
 }
 
+void WorklaneView::unzoom() {
+  if (!m_zoomedPane)
+    return;
+  for (auto *col : m_columns) {
+    if (!col)
+      continue;
+    for (int i = 0; i < col->count(); ++i) {
+      QWidget *w = col->widget(i);
+      if (!w)
+        continue;
+      w->show();
+      if (auto *pane = qobject_cast<TerminalPane *>(w)) {
+        pane->setZoomed(false);
+      }
+    }
+  }
+  m_zoomedPane.clear();
+}
+
 void WorklaneView::toggleSplitZoom() {
+  if (m_zoomedPane) {
+    unzoom();
+    return;
+  }
   if (!m_activeSurface)
     return;
   KhosttySplitter *splitter = findSplitterForSurface(m_activeSurface);
@@ -997,23 +893,31 @@ void WorklaneView::toggleSplitZoom() {
   if (!splitter || !currentPane || splitter->count() <= 1)
     return;
 
-  if (m_isZoomed) {
-    for (int i = 0; i < splitter->count(); ++i) {
-      splitter->widget(i)->show();
-      if (auto *pane = qobject_cast<TerminalPane *>(splitter->widget(i))) {
-        pane->setZoomed(false);
-      }
+  for (int i = 0; i < splitter->count(); ++i) {
+    QWidget *w = splitter->widget(i);
+    if (w != currentPane) {
+      w->hide();
     }
-    m_isZoomed = false;
+  }
+  currentPane->setZoomed(true);
+  m_zoomedPane = currentPane;
+}
+
+void WorklaneView::updateSearchCountLabel() {
+  if (!m_searchCountLabel)
+    return;
+  if (m_searchTotal < 0) {
+    m_searchCountLabel->clear();
+  } else if (m_searchTotal == 0) {
+    m_searchCountLabel->setText(
+        m_searchEdit && m_searchEdit->text().isEmpty()
+            ? QString()
+            : i18n("No matches"));
+  } else if (m_searchSelected < 0) {
+    m_searchCountLabel->setText(i18n("%1 matches", m_searchTotal));
   } else {
-    for (int i = 0; i < splitter->count(); ++i) {
-      QWidget *w = splitter->widget(i);
-      if (w != currentPane) {
-        w->hide();
-      }
-    }
-    currentPane->setZoomed(true);
-    m_isZoomed = true;
+    m_searchCountLabel->setText(
+        i18n("%1 of %2", m_searchSelected + 1, m_searchTotal));
   }
 }
 
@@ -1044,6 +948,9 @@ void WorklaneView::hideSearchBar() {
   if (!m_searchBar)
     return;
   m_searchBar->hide();
+  m_searchTotal = -1;
+  m_searchSelected = -1;
+  updateSearchCountLabel();
   if (m_activeSurface) {
     m_activeSurface->endSearch();
     m_activeSurface->setFocus();

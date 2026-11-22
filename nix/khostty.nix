@@ -10,7 +10,7 @@
 }:
 stdenv.mkDerivation (finalAttrs: {
   pname = "khostty";
-  version = "0.1.1";
+  version = "0.1.2";
 
   src = lib.cleanSourceWith {
     src = ../.;
@@ -34,18 +34,14 @@ stdenv.mkDerivation (finalAttrs: {
     kdePackages.breeze
     kdePackages.breeze-icons
     kdePackages.plasma-integration
-    kdePackages.qqc2-desktop-style
     kdePackages.kxmlgui
     kdePackages.kconfig
     kdePackages.kconfigwidgets
     kdePackages.kwidgetsaddons
     kdePackages.kcoreaddons
     kdePackages.ki18n
-    kdePackages.kglobalaccel
     kdePackages.kwindowsystem
     kdePackages.knotifications
-    kdePackages.kio
-    kdePackages.layer-shell-qt
     libGL
     libghostty-bridge
   ];

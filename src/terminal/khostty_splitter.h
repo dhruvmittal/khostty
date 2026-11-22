@@ -31,7 +31,6 @@ class KhosttySplitter : public QSplitter {
 
 public:
     explicit KhosttySplitter(Qt::Orientation orientation, QWidget* parent = nullptr);
-    explicit KhosttySplitter(QWidget* parent = nullptr);
     ~KhosttySplitter() override = default;
 
 protected:

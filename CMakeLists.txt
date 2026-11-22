@@ -1,11 +1,10 @@
 cmake_minimum_required(VERSION 3.25)
-project(khostty VERSION 0.1.1 LANGUAGES CXX)
+project(khostty VERSION 0.1.2 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
-set(CMAKE_AUTOUIC ON)
 
 find_package(ECM 6.0.0 REQUIRED NO_MODULE)
 set(CMAKE_MODULE_PATH ${ECM_MODULE_PATH})
@@ -18,7 +17,6 @@ find_package(Qt6 6.5 REQUIRED COMPONENTS
     Widgets
     OpenGL
     OpenGLWidgets
-    DBus
 )
 
 find_package(OpenGL REQUIRED COMPONENTS OpenGL EGL)
@@ -34,14 +32,10 @@ find_package(KF6 6.0 REQUIRED COMPONENTS
     WidgetsAddons
     OPTIONAL_COMPONENTS
     WindowSystem
-    GlobalAccel
 )
 
-find_package(LayerShellQt QUIET)
-
 # Libghostty resolution:
-# If GHOSTTY_PREFIX is provided (from Nix or Arch), use it directly.
-# Otherwise, fall back to building from vendor/ghostty submodule via cmake/BuildGhosttyBridge.cmake
+# Requires GHOSTTY_PREFIX (provided by Nix, Arch PKGBUILD, or -DGHOSTTY_PREFIX=...).
 if(NOT GHOSTTY_PREFIX AND DEFINED ENV{GHOSTTY_PREFIX})
     set(GHOSTTY_PREFIX "$ENV{GHOSTTY_PREFIX}")
 endif()
@@ -65,11 +59,10 @@ if(GHOSTTY_PREFIX)
         INTERFACE_INCLUDE_DIRECTORIES "${GHOSTTY_INCLUDE_DIR}"
     )
 else()
-    include(cmake/BuildGhosttyBridge.cmake)
+    message(FATAL_ERROR "GHOSTTY_PREFIX must be set (via nix develop, PKGBUILD, or -DGHOSTTY_PREFIX=/path/to/ghostty-prefix).")
 endif()
 
-add_executable(khostty
-    src/main.cpp
+add_library(khostty_lib OBJECT
     src/core/ghostty_core.cpp
     src/terminal/terminal_surface.cpp
     src/terminal/terminal_pane.cpp
@@ -78,15 +71,14 @@ add_executable(khostty
     src/terminal/worklane_view.cpp
     src/window/worklane_sidebar.cpp
     src/window/main_window.cpp
-    resources/resources.qrc
 )
 
-target_include_directories(khostty PRIVATE
+target_include_directories(khostty_lib PUBLIC
     src
     bridge
 )
 
-target_link_libraries(khostty PRIVATE
+target_link_libraries(khostty_lib PUBLIC
     Ghostty::Core
     OpenGL::EGL
     Qt6::Core
@@ -94,7 +86,6 @@ target_link_libraries(khostty PRIVATE
     Qt6::Widgets
     Qt6::OpenGL
     Qt6::OpenGLWidgets
-    Qt6::DBus
     KF6::XmlGui
     KF6::ConfigCore
     KF6::ConfigWidgets
@@ -106,22 +97,28 @@ target_link_libraries(khostty PRIVATE
 )
 
 if(TARGET KF6::WindowSystem)
-    target_link_libraries(khostty PRIVATE KF6::WindowSystem)
-    target_compile_definitions(khostty PRIVATE KHOSTTY_HAS_KWINDOWSYSTEM=1)
-endif()
-
-if(TARGET KF6::GlobalAccel)
-    target_link_libraries(khostty PRIVATE KF6::GlobalAccel)
-    target_compile_definitions(khostty PRIVATE KHOSTTY_HAS_KGLOBALACCEL=1)
-endif()
-
-if(TARGET LayerShellQt::Interface)
-    target_link_libraries(khostty PRIVATE LayerShellQt::Interface)
-    target_compile_definitions(khostty PRIVATE KHOSTTY_HAS_LAYERSHELL=1)
+    target_link_libraries(khostty_lib PUBLIC KF6::WindowSystem)
+    target_compile_definitions(khostty_lib PUBLIC KHOSTTY_HAS_KWINDOWSYSTEM=1)
 endif()
 
 if(GHOSTTY_PREFIX)
-    target_compile_definitions(khostty PRIVATE GHOSTTY_PREFIX="${GHOSTTY_PREFIX}")
+    target_compile_definitions(khostty_lib PUBLIC GHOSTTY_PREFIX="${GHOSTTY_PREFIX}")
+endif()
+
+add_executable(khostty
+    src/main.cpp
+    resources/resources.qrc
+)
+target_link_libraries(khostty PRIVATE khostty_lib)
+
+if(BUILD_TESTING)
+    find_package(Qt6 6.5 QUIET COMPONENTS Test)
+    if(Qt6Test_FOUND)
+        add_executable(test_worklane tests/test_worklane.cpp)
+        target_link_libraries(test_worklane PRIVATE khostty_lib Qt6::Test)
+        add_test(NAME test_worklane COMMAND test_worklane)
+        set_tests_properties(test_worklane PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    endif()
 endif()
 
 include(GNUInstallDirs)

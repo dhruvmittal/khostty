@@ -22,7 +22,6 @@ public:
   TerminalSurface *activeSurface() const;
   int tabCount() const;
   WorklaneView *worklaneAt(int index) const;
-  QString tabText(int index) const;
   void setCurrentTabIndex(int index);
   void moveTab(int fromIndex, int toIndex);
   void movePane(TerminalSurface *surface, int targetTabIndex,
@@ -62,6 +61,10 @@ public slots:
 protected:
   void changeEvent(QEvent *event) override;
   void showEvent(QShowEvent *event) override;
+
+private slots:
+  void showSurfaceContextMenu(const QPoint &globalPos,
+                              const QString &hoveredUrl);
 
 private:
   void setupActions();

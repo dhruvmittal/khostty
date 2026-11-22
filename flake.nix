@@ -63,18 +63,14 @@
           pkgs.kdePackages.breeze
           pkgs.kdePackages.breeze-icons
           pkgs.kdePackages.plasma-integration
-          pkgs.kdePackages.qqc2-desktop-style
           pkgs.kdePackages.kxmlgui
           pkgs.kdePackages.kconfig
           pkgs.kdePackages.kconfigwidgets
           pkgs.kdePackages.kwidgetsaddons
           pkgs.kdePackages.kcoreaddons
           pkgs.kdePackages.ki18n
-          pkgs.kdePackages.kglobalaccel
           pkgs.kdePackages.kwindowsystem
           pkgs.kdePackages.knotifications
-          pkgs.kdePackages.kio
-          pkgs.kdePackages.layer-shell-qt
           libghostty-bridge
         ];
         GHOSTTY_PREFIX = "${libghostty-bridge}";

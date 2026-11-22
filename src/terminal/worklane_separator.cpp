@@ -1,12 +1,12 @@
 #include "terminal/worklane_separator.h"
+#include "terminal/khostty_splitter.h"
 #include "terminal/worklane_view.h"
 
 #include <QApplication>
 #include <QPainter>
 #include <QMouseEvent>
-#include <algorithm>
 
-WorklaneSeparator::WorklaneSeparator(QWidget* leftCol, WorklaneView* worklane, QWidget* parent)
+WorklaneSeparator::WorklaneSeparator(KhosttySplitter* leftCol, WorklaneView* worklane, QWidget* parent)
     : QWidget(parent)
     , m_leftCol(leftCol)
     , m_worklane(worklane)
@@ -71,14 +71,7 @@ bool WorklaneSeparator::eventFilter(QObject* watched, QEvent* event) {
             int delta = me->globalPosition().toPoint().x() - m_startGlobalX;
 
             if (m_leftCol && m_worklane) {
-                int viewportW = m_worklane->viewport()->width();
-                // "Any individual terminal should not be allowed to be wider than 90% of the window (when a split is present)"
-                int maxW = std::max(280, static_cast<int>(viewportW * 0.90));
-                int minW = 280;
-                int newW = std::clamp(m_startLeftWidth + delta, minW, maxW);
-
-                m_leftCol->setFixedWidth(newW);
-                m_worklane->updateCanvasLayout();
+                m_worklane->setColumnWidth(m_leftCol, m_startLeftWidth + delta);
             }
             return true; // Absorb event so terminal doesn't steal mouse moves
         } else if (event->type() == QEvent::MouseButtonRelease) {

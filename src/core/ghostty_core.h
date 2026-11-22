@@ -5,6 +5,7 @@
 #include <QHash>
 #include <QTimer>
 #include <atomic>
+#include <optional>
 #include <ghostty.h>
 #include <khostty_bridge.h>
 
@@ -25,8 +26,8 @@ public:
     void registerSurface(ghostty_surface_t surface, TerminalSurface* widget);
     void unregisterSurface(ghostty_surface_t surface);
     TerminalSurface* findSurface(ghostty_surface_t surface) const;
-    QList<TerminalSurface*> allSurfaces() const { return m_surfaces.values(); }
-    void reloadConfig();
+    void reloadConfig(bool soft = false);
+    void resetAllFontSizes();
     void setColorScheme(bool isDark);
     QString writeRuntimeConfig();
     QString openConfigPath() const;
@@ -70,10 +71,13 @@ private:
         bool confirmed);
     static void closeSurfaceCallback(void* userdata, bool process_alive);
 
+    ghostty_config_t loadConfig();
+
     ghostty_app_t m_app = nullptr;
     ghostty_config_t m_config = nullptr;
     QHash<ghostty_surface_t, TerminalSurface*> m_surfaces;
     bool m_initialized = false;
+    std::optional<bool> m_lastDark;
     std::atomic<bool> m_tickPending{false};
     QTimer m_tickTimer;
 };
