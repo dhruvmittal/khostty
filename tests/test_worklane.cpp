@@ -1,5 +1,7 @@
 #include <QApplication>
+#include <QHideEvent>
 #include <QResizeEvent>
+#include <QShowEvent>
 #include <QStandardPaths>
 #include <QtTest>
 
@@ -248,6 +250,33 @@ private slots:
 
     pane->setTitle(QString(120, QLatin1Char('a')));
     QCOMPARE(pane->minimumSizeHint().width(), shortMinW);
+  }
+
+  void testSurfaceOcclusionAndShowHideWithoutCore() {
+    WorklaneView wl;
+    resizeView(wl, 800, 600);
+
+    TerminalSurface *surface = wl.activeSurface();
+    QVERIFY(surface != nullptr);
+    QCOMPARE(surface->surface(), nullptr);
+
+    // Send show/hide events directly because QT_QPA_PLATFORM=offscreen does not
+    // support creating a top-level QOpenGLWidget backing store via wl.show().
+    QShowEvent showEv;
+    QCoreApplication::sendEvent(surface, &showEv);
+    surface->setWindowOccluded(true);
+
+    surface->hide();
+    QHideEvent hideEv;
+    QCoreApplication::sendEvent(surface, &hideEv);
+    QCoreApplication::processEvents();
+    QVERIFY(!surface->isVisible());
+
+    surface->show();
+    QCoreApplication::sendEvent(surface, &showEv);
+    surface->setWindowOccluded(false);
+    QCoreApplication::processEvents();
+    QVERIFY(!surface->isHidden());
   }
 };
 

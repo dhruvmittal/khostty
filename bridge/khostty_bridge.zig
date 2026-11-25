@@ -47,7 +47,10 @@ export fn khostty_surface_take_frame(
     const maybe_frame = surface.core_surface.renderer.takeFrame();
     if (maybe_frame) |frame| {
         const alloc = surface.app.core_app.alloc;
-        const box = alloc.create(ExportedFrame) catch return false;
+        const box = alloc.create(ExportedFrame) catch {
+            frame.deinit();
+            return false;
+        };
         box.* = frame;
 
         out_frame.* = .{

@@ -6,6 +6,7 @@
 class QTabBar;
 class QStackedWidget;
 class QSplitter;
+class QWindow;
 class WorklaneView;
 class TerminalSurface;
 class KCommandBar;
@@ -59,6 +60,7 @@ public slots:
   void handleDesktopNotification(const QString &title, const QString &body);
 
 protected:
+  bool eventFilter(QObject *watched, QEvent *event) override;
   void changeEvent(QEvent *event) override;
   void showEvent(QShowEvent *event) override;
 
@@ -68,6 +70,9 @@ private slots:
 
 private:
   void setupActions();
+  void ensureWindowExposeObserver();
+  bool isWindowOccluded() const;
+  void syncAllSurfaceOcclusions();
   void updateTabBarVisibility();
   void updateTabTitleWithSplitCount(int index);
   WorklaneView *createTab(const QString &title = QString(),
@@ -80,6 +85,8 @@ private:
   bool m_sidebarVisible = false;
   int m_sidebarSavedWidth = 240;
   QPointer<KCommandBar> m_commandBar;
+  QPointer<QWindow> m_observedWindow;
+  bool m_windowWasExposed = false;
   QAction *m_toggleSidebarAction = nullptr;
   QList<QAction *> m_tabSwitchActions;
 };

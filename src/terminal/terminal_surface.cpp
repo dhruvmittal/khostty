@@ -6,8 +6,11 @@
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QFocusEvent>
+#include <QHideEvent>
 #include <QOpenGLContext>
+#include <QShowEvent>
 #include <QSurfaceFormat>
+#include <QTimer>
 #include <QDebug>
 #include <QDesktopServices>
 #include <QUrl>
@@ -77,9 +80,16 @@ TerminalSurface::TerminalSurface(QWidget* parent, const QString& workingDirector
     GhosttyCore::instance().registerSurface(m_surface, this);
 
     syncSurfaceSize();
+
+    // Ghostty initializes surfaces with focused=true (running a 600ms cursor blink timer)
+    // and visible=true. Coalesce initial focus and occlusion so same-tick show()/setFocus()
+    // avoid queueing false->true into one mailbox drain (libxev async cancel race).
+    scheduleFocusSync();
+    scheduleOcclusionSync();
 }
 
 TerminalSurface::~TerminalSurface() {
+    QObject::disconnect(m_contextDestroyedConn);
     if (m_glInitialized && isValid() && context()) {
         makeCurrent();
         freeGLResources();
@@ -99,6 +109,27 @@ void TerminalSurface::initializeGL() {
         qWarning() << "OpenGL context is not valid for TerminalSurface";
         return;
     }
+
+    if (m_glInitialized) {
+        freeGLResources();
+    }
+    m_hasFrame = false;
+    m_supportsDmaBuf = true;
+
+    QObject::disconnect(m_contextDestroyedConn);
+    m_contextDestroyedConn = connect(ctx, &QOpenGLContext::aboutToBeDestroyed, this, [this, ctx]() {
+        if (QOpenGLContext::currentContext() == ctx) {
+            freeGLResources();
+        } else if (isValid() && context() == ctx) {
+            makeCurrent();
+            freeGLResources();
+            doneCurrent();
+        } else {
+            m_texture = 0;
+            m_hasFrame = false;
+            m_glInitialized = false;
+        }
+    }, Qt::DirectConnection);
 
     initializeOpenGLFunctions();
 
@@ -120,6 +151,15 @@ void TerminalSurface::initializeGL() {
 
     setupGLResources();
     m_glInitialized = true;
+
+    if (!m_supportsDmaBuf) {
+        reportPresentationUnhealthy();
+    }
+
+    if (m_hadGLContext && m_surface) {
+        ghostty_surface_refresh(m_surface);
+    }
+    m_hadGLContext = true;
 }
 
 void TerminalSurface::setupGLResources() {
@@ -305,6 +345,12 @@ void TerminalSurface::uploadMemoryFrame(const khostty_frame_memory_s& memory) {
     m_hasFrame = true;
 }
 
+void TerminalSurface::reportPresentationUnhealthy() {
+    if (!m_surface || m_reportedUnhealthy) return;
+    m_reportedUnhealthy = true;
+    khostty_surface_report_presentation_health(m_surface, false);
+}
+
 void TerminalSurface::paintGL() {
     if (!m_surface || !m_glInitialized || !isValid() || !context()) return;
 
@@ -318,11 +364,17 @@ void TerminalSurface::paintGL() {
     if (khostty_surface_take_frame(m_surface, &frame)) {
         if (frame.frame_type == KHOSTTY_FRAME_DMABUF) {
             bool ok = importDmaBufFrame(frame.dmabuf);
-            if (ok) m_hasFrame = true;
+            if (ok) {
+                m_hasFrame = true;
+            }
             khostty_surface_release_frame(m_surface, &frame);
-            khostty_surface_report_presentation_health(m_surface, ok);
+            if (!ok) {
+                reportPresentationUnhealthy();
+            }
         } else if (frame.frame_type == KHOSTTY_FRAME_MEMORY) {
             uploadMemoryFrame(frame.memory);
+            khostty_surface_release_frame(m_surface, &frame);
+        } else {
             khostty_surface_release_frame(m_surface, &frame);
         }
     }
@@ -591,16 +643,59 @@ void TerminalSurface::wheelEvent(QWheelEvent* event) {
 
 void TerminalSurface::focusInEvent(QFocusEvent* event) {
     QOpenGLWidget::focusInEvent(event);
-    if (m_surface) {
-        ghostty_surface_set_focus(m_surface, true);
-    }
+    scheduleFocusSync();
 }
 
 void TerminalSurface::focusOutEvent(QFocusEvent* event) {
     QOpenGLWidget::focusOutEvent(event);
-    if (m_surface) {
-        ghostty_surface_set_focus(m_surface, false);
-    }
+    scheduleFocusSync();
+}
+
+void TerminalSurface::scheduleFocusSync() {
+    if (!m_surface || m_focusSyncPending) return;
+    m_focusSyncPending = true;
+    QTimer::singleShot(0, this, &TerminalSurface::syncFocus);
+}
+
+void TerminalSurface::syncFocus() {
+    m_focusSyncPending = false;
+    if (!m_surface) return;
+    const bool focused = hasFocus();
+    if (m_lastSentFocus == focused) return;
+    m_lastSentFocus = focused;
+    ghostty_surface_set_focus(m_surface, focused);
+}
+
+void TerminalSurface::setWindowOccluded(bool occluded) {
+    if (m_windowOccluded == occluded) return;
+    m_windowOccluded = occluded;
+    scheduleOcclusionSync();
+}
+
+void TerminalSurface::scheduleOcclusionSync() {
+    if (!m_surface || m_occlusionSyncPending) return;
+    m_occlusionSyncPending = true;
+    QTimer::singleShot(0, this, &TerminalSurface::syncOcclusion);
+}
+
+void TerminalSurface::syncOcclusion() {
+    m_occlusionSyncPending = false;
+    if (!m_surface) return;
+    const bool windowMinimized = window() && window()->isMinimized();
+    const bool visible = m_shown && !m_windowOccluded && !windowMinimized;
+    ghostty_surface_set_occlusion(m_surface, visible);
+}
+
+void TerminalSurface::showEvent(QShowEvent* event) {
+    QOpenGLWidget::showEvent(event);
+    m_shown = true;
+    scheduleOcclusionSync();
+}
+
+void TerminalSurface::hideEvent(QHideEvent* event) {
+    QOpenGLWidget::hideEvent(event);
+    m_shown = false;
+    scheduleOcclusionSync();
 }
 
 void TerminalSurface::inputMethodEvent(QInputMethodEvent* event) {

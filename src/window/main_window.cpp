@@ -43,6 +43,7 @@
 #include <QTabBar>
 #include <QTextStream>
 #include <QVBoxLayout>
+#include <QWindow>
 #include <algorithm>
 #include <cmath>
 
@@ -134,7 +135,11 @@ MainWindow::MainWindow(QWidget *parent) : KXmlGuiWindow(parent) {
   setWindowTitle(QStringLiteral("Khostty"));
 }
 
-MainWindow::~MainWindow() = default;
+MainWindow::~MainWindow() {
+  if (m_observedWindow) {
+    m_observedWindow->removeEventFilter(this);
+  }
+}
 
 int MainWindow::tabCount() const { return m_stack ? m_stack->count() : 0; }
 
@@ -394,6 +399,7 @@ WorklaneView *MainWindow::createTab(const QString &title,
             Qt::UniqueConnection);
     connect(surface, &TerminalSurface::desktopNotification, this,
             &MainWindow::handleDesktopNotification, Qt::UniqueConnection);
+    surface->setWindowOccluded(isWindowOccluded());
   };
 
   connect(worklane, &WorklaneView::activeSurfaceChanged, this,
@@ -1119,14 +1125,62 @@ void MainWindow::updateTitle(const QString &title) {
   }
 }
 
+void MainWindow::ensureWindowExposeObserver() {
+  QWindow *win = windowHandle();
+  if (!win || win == m_observedWindow)
+    return;
+  if (m_observedWindow) {
+    m_observedWindow->removeEventFilter(this);
+  }
+  m_observedWindow = win;
+  m_windowWasExposed = win->isExposed();
+  win->installEventFilter(this);
+}
+
+bool MainWindow::isWindowOccluded() const {
+  if (isMinimized())
+    return true;
+  if (m_windowWasExposed && m_observedWindow && !m_observedWindow->isExposed()) {
+    return true;
+  }
+  return false;
+}
+
+void MainWindow::syncAllSurfaceOcclusions() {
+  if (!m_stack)
+    return;
+  const bool occluded = isWindowOccluded();
+  for (int i = 0; i < m_stack->count(); ++i) {
+    if (auto *wl = worklaneAt(i)) {
+      for (auto *surface : wl->allSurfaces()) {
+        if (surface) {
+          surface->setWindowOccluded(occluded);
+        }
+      }
+    }
+  }
+}
+
+bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
+  if (watched == m_observedWindow && event->type() == QEvent::Expose) {
+    if (m_observedWindow->isExposed()) {
+      m_windowWasExposed = true;
+    }
+    syncAllSurfaceOcclusions();
+  }
+  return KXmlGuiWindow::eventFilter(watched, event);
+}
+
 void MainWindow::changeEvent(QEvent *event) {
   KXmlGuiWindow::changeEvent(event);
   if (event->type() == QEvent::ApplicationPaletteChange ||
       event->type() == QEvent::PaletteChange) {
     syncColorScheme();
   }
+  if (event->type() == QEvent::WindowStateChange) {
+    syncAllSurfaceOcclusions();
+  }
   if (event->type() == QEvent::ActivationChange && isActiveWindow()) {
-    ghostty_app_set_focus(GhosttyCore::instance().app(), true);
     auto *wl = currentWorklane();
     if (wl && wl->activeSurface()) {
       wl->activeSurface()->setFocus();
@@ -1136,6 +1190,8 @@ void MainWindow::changeEvent(QEvent *event) {
 
 void MainWindow::showEvent(QShowEvent *event) {
   KXmlGuiWindow::showEvent(event);
+  ensureWindowExposeObserver();
+  syncAllSurfaceOcclusions();
   syncAppearance();
   auto *wl = currentWorklane();
   if (wl && wl->activeSurface()) {

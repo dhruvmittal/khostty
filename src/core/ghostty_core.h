@@ -3,7 +3,6 @@
 #include <QObject>
 #include <QColor>
 #include <QHash>
-#include <QTimer>
 #include <atomic>
 #include <optional>
 #include <ghostty.h>
@@ -79,5 +78,4 @@ private:
     bool m_initialized = false;
     std::optional<bool> m_lastDark;
     std::atomic<bool> m_tickPending{false};
-    QTimer m_tickTimer;
 };

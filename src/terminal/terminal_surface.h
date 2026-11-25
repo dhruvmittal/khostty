@@ -32,6 +32,7 @@ public:
     void startSearch(const QString& needle);
     void navigateSearch(bool next);
     void endSearch();
+    void setWindowOccluded(bool occluded);
 
 signals:
     void titleChanged(const QString& title);
@@ -66,6 +67,8 @@ protected:
     void wheelEvent(QWheelEvent* event) override;
     void focusInEvent(QFocusEvent* event) override;
     void focusOutEvent(QFocusEvent* event) override;
+    void showEvent(QShowEvent* event) override;
+    void hideEvent(QHideEvent* event) override;
     void inputMethodEvent(QInputMethodEvent* event) override;
     QVariant inputMethodQuery(Qt::InputMethodQuery query) const override;
 
@@ -76,6 +79,11 @@ private:
     void syncSurfaceSize(uint32_t px_w, uint32_t px_h);
     bool importDmaBufFrame(const khostty_frame_dmabuf_s& dmabuf);
     void uploadMemoryFrame(const khostty_frame_memory_s& memory);
+    void reportPresentationUnhealthy();
+    void scheduleOcclusionSync();
+    void syncOcclusion();
+    void scheduleFocusSync();
+    void syncFocus();
     ghostty_input_mods_e translateModifiers(Qt::KeyboardModifiers qmods) const;
     ghostty_input_mouse_button_e translateMouseButton(Qt::MouseButton btn) const;
     ghostty_input_key_s buildGhosttyKeyEvent(QKeyEvent* event, ghostty_input_action_e action, QByteArray& textStorage) const;
@@ -89,7 +97,9 @@ private:
     QOpenGLVertexArrayObject m_vao;
     GLuint m_texture = 0;
     bool m_glInitialized = false;
+    bool m_hadGLContext = false;
     bool m_hasFrame = false;
+    QMetaObject::Connection m_contextDestroyedConn;
     double m_lastDpr = 0.0;
     uint32_t m_lastPxW = 0;
     uint32_t m_lastPxH = 0;
@@ -97,8 +107,14 @@ private:
     // DMA-BUF EGL state
     void* m_eglDisplay = nullptr;
     bool m_supportsDmaBuf = true;
+    bool m_reportedUnhealthy = false;
     QString m_title;
     QString m_currentPwd;
     QString m_hoveredUrl;
     bool m_isComposing = false;
+    bool m_shown = false;
+    bool m_windowOccluded = false;
+    bool m_occlusionSyncPending = false;
+    bool m_lastSentFocus = true;
+    bool m_focusSyncPending = false;
 };

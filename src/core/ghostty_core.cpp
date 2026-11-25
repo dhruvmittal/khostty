@@ -71,17 +71,20 @@ bool GhosttyCore::initialize(int argc, char** argv) {
         return false;
     }
 
+    m_tickPending.store(false);
     m_initialized = true;
 
     if (qGuiApp) {
+        ghostty_app_set_focus(m_app, qGuiApp->applicationState() == Qt::ApplicationActive);
         connect(qGuiApp, &QGuiApplication::fontDatabaseChanged,
                 this, [this]() { reloadConfig(false); });
+        connect(qGuiApp, &QGuiApplication::applicationStateChanged,
+                this, [this](Qt::ApplicationState state) {
+                    if (m_app && m_initialized) {
+                        ghostty_app_set_focus(m_app, state == Qt::ApplicationActive);
+                    }
+                });
     }
-
-    // Ghostty uses wakeupCallback for event-driven ticks.
-    // Keep a relaxed 500ms heartbeat timer as a safeguard rather than 16ms busy-polling.
-    connect(&m_tickTimer, &QTimer::timeout, this, &GhosttyCore::tick);
-    m_tickTimer.start(500);
 
     return true;
 }
@@ -91,10 +94,10 @@ void GhosttyCore::shutdown() {
         return;
     }
     m_initialized = false;
+    m_tickPending.store(false);
     m_lastDark.reset();
-    m_tickTimer.stop();
     if (qGuiApp) {
-        disconnect(qGuiApp, &QGuiApplication::fontDatabaseChanged, this, nullptr);
+        qGuiApp->disconnect(this);
     }
 
     m_surfaces.clear();
@@ -135,7 +138,9 @@ void GhosttyCore::wakeupCallback(void* userdata) {
     auto* self = static_cast<GhosttyCore*>(userdata);
     if (!self) return;
     if (!self->m_tickPending.exchange(true)) {
-        QMetaObject::invokeMethod(self, &GhosttyCore::tick, Qt::QueuedConnection);
+        if (!QMetaObject::invokeMethod(self, &GhosttyCore::tick, Qt::QueuedConnection)) {
+            self->m_tickPending.store(false);
+        }
     }
 }
 
